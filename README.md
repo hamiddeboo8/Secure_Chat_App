@@ -1,5 +1,5 @@
 # Secure_Chat_App
-### Data & Networks Security Group Projects
+### Data & Networks Security Group Project
 ### Contributors
 * Parsa   Hosseini
 * Hamid Dehbashi
