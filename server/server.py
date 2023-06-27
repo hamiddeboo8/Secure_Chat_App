@@ -7,16 +7,16 @@ import threading
 from parse import parse
 from .database import Database
 from utils.utils import asymmetric_encrypt, set_keys, sign, asymmetric_decrypt, verify, save_server_keys, \
-    load_server_keys, deserialize_public_key
+    load_server_keys, deserialize_public_key, get_cipher, symmetric_decrypt, symmetric_encrypt
 
 
 class Server:
     def __init__(self):
-        self.MAX_LENGTH = 2048
+        self.MAX_LENGTH = 65536
         self.PORT = 5050
         self.SERVER = socket.gethostbyname(socket.gethostname())
         self.ADDR = (self.SERVER, self.PORT)
-        self.FORMAT = 'utf-8'
+        self.FORMAT = 'latin-1'
         self.DISCONNECT_MESSAGE = "!DISCONNECT"
 
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -34,57 +34,55 @@ class Server:
 
     def get_msg(self, conn, addr):
         try:
-            cipher = conn.recv(self.MAX_LENGTH).decode(self.FORMAT)
-            cipher = json.loads(cipher)
-            msg = asymmetric_decrypt(cipher['message'], self.private_key)
-            return msg, cipher['signature']
+            msg = conn.recv(self.MAX_LENGTH)
+            return msg
         except:
             print(f"[UNEXPECTED CLOSE CONNECTION] {addr}")
             exit(-1)
 
     def send_msg(self, msg, conn, addr):
-        conn.send(msg.encode(self.FORMAT))
+        conn.send(msg)
 
-    def send_json(self, dic, conn, addr):
-        data = json.dumps(dic)
-        conn.send(bytes(data, encoding=self.FORMAT))
-        print(f"JSON sent to {addr}")
-
-    def get_json(self, conn, addr):
+    def handshake(self, conn, addr):
         try:
-            js = conn.recv(self.MAX_LENGTH).decode(self.FORMAT)
-            dic = json.loads(js)
-            return dic
+            cipher_text = self.get_msg(conn, addr)
+            plain = asymmetric_decrypt(cipher_text, self.private_key)
+            plain = plain.decode(self.FORMAT)
+            plain = json.loads(plain)
+            msg = plain['message']
+            session_key, session_iv, nonce = msg['session_key'].encode(self.FORMAT), msg['session_iv'].encode(self.FORMAT), msg['nonce']
+            cipher = get_cipher(session_key, session_iv)
+            response = json.dumps({'status': '', 'message': '', 'nonce': nonce})
+            self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
         except:
-            print(f"[UNEXPECTED ERROR WHILE GETTING JSON FROM] {addr}")
+            print(f"[UNEXPECTED CLOSE CONNECTION] {addr}")
             exit(-1)
 
+        return cipher
+
     def handle_client(self, conn, addr):
+        cipher = self.handshake(conn, addr)
         print(f"[NEW CONNECTION] {addr} connected.")
         connected = True
         while connected:
-            msg, signature = self.get_msg(conn, addr)
-
+            msg = self.get_msg(conn, addr)
+            msg = json.loads(symmetric_decrypt(msg, cipher).decode(self.FORMAT))
             try:
-                msg_json = json.loads(msg)
+                msg_json, signature = msg['message'], msg['signature']
             except TypeError:
                 print(f"[UNEXPECTED CLOSE CONNECTION] {addr}")
                 exit(-1)
 
             msg_command = msg_json['command']
             if msg_command == 'REGISTER':
-                response = self.register(msg_json)
+                response = self.register(msg_json, signature)
 
             if msg_command == self.DISCONNECT_MESSAGE:
                 connected = False
                 continue
-            elif msg.startswith('REGISTER'):
-                self.register(msg, conn, addr)
-            elif msg.startswith('LOGIN'):
-                self.login(msg, conn, addr)
             else:
                 print('Invalid msg - ignored')
-            self.send_msg(response, conn, addr)
+            self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
         print(f"[CLOSE CONNECTION] {addr} closed.")
 
     def start(self):
@@ -100,27 +98,23 @@ class Server:
         username = msg_json['username']
         password = msg_json['password']
         nonce = msg_json['nonce']
-        public_key = deserialize_public_key(msg_json['public_key'])
-
-        if not verify(json.dump(msg_json), signature, public_key):
+        public_key = deserialize_public_key(msg_json['public_key'].encode(self.FORMAT))
+        if not verify(json.dumps(msg_json).encode(self.FORMAT), signature.encode(self.FORMAT), public_key):
             print(f"[UNEXPECTED CLOSE CONNECTION]")
             exit(-1)
 
-        save_status, msg = self.save_user(username, password, public_key)
-        message, encrypted_message = asymmetric_encrypt({'message': msg, 'nonce': nonce,
-                                                         'status': save_status},
-                                                        key=public_key)
-        signature = sign(message, self.private_key)
-        response = json.dumps({'message': encrypted_message, 'signature': signature})
-
+        save_status, msg = self.save_user(username, password, msg_json['public_key'])
+        message = {'status': save_status, 'message': msg, 'nonce': nonce}
+        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+        response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
         return response
 
     def save_user(self, username, password, public_key):
         if self.database.has_user(username):
             return False, 'USERNAME ALREADY EXISTS'
-        salt = int.from_bytes(os.urandom(16), byteorder="big")
+        salt = int.from_bytes(os.urandom(8), byteorder="big")
         salty_password = f'{password}_{salt}'
-        h_password = hashlib.sha256(salty_password).hexdigest()
+        h_password = hashlib.sha256(salty_password.encode(self.FORMAT)).hexdigest()
         self.database.insert_user(username=username, h_password=h_password, public_key=public_key, salt=salt)
         return True, 'REGISTER SUCCESSFUL'
 

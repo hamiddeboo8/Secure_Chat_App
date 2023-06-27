@@ -6,8 +6,8 @@ from enum import Enum
 
 from tabulate import tabulate
 
-from utils.utils import asymmetric_encrypt, set_keys, sign, asymmetric_decrypt, verify, save_key, \
-    load_server_public_key, serialize_public_key
+from utils.utils import asymmetric_encrypt, set_keys, set_key, sign, asymmetric_decrypt, verify, save_key, \
+    load_server_public_key, serialize_public_key, symmetric_decrypt, symmetric_encrypt
 
 
 class Menu(Enum):
@@ -17,24 +17,48 @@ class Menu(Enum):
 
 class Client:
     def __init__(self):
-        self.MAX_LENGTH = 2048
+        self.MAX_LENGTH = 65536
         self.PORT = 5050
-        self.FORMAT = 'utf-8'
+        self.FORMAT = 'latin-1'
         self.DISCONNECT_MESSAGE = "!DISCONNECT"
         self.SERVER = socket.gethostbyname(socket.gethostname())
         self.ADDR = (self.SERVER, self.PORT)
         self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.client.connect(self.ADDR)
-        # TODO self.session_key
+
+        self.session_key, self.session_iv, self.session_cipher = set_key()
         # Exception?
         self.state = Menu.MAIN
         self.username = None
 
         self.server_public_key = load_server_public_key()  # TODO
+
+        self.handshake()
+
         self.private_key = None
         self.public_key = None
 
         self.nonce = None
+
+    def handshake(self):
+        nonce = int.from_bytes(os.urandom(16), byteorder="big")
+        plain_json = {'message': {'session_key': self.session_key.decode(self.FORMAT), 'session_iv': self.session_iv.decode(self.FORMAT), 'nonce':nonce}, 
+                      'signature': ''}
+        
+        plain = json.dumps(plain_json).encode(self.FORMAT)
+
+        encrypted_message = asymmetric_encrypt(plain, self.server_public_key)
+        self.send_msg(encrypted_message)
+
+        response = self.get_msg()
+        response = json.loads(symmetric_decrypt(response, self.session_cipher).decode(self.FORMAT))
+
+        if response['nonce'] == nonce:
+            return
+        else:
+            print("[UNEXPECTED SERVER ERROR]")
+            exit(-1)
+
 
     def menu(self, print=True, command=None):
         if self.state == Menu.MAIN:
@@ -70,29 +94,15 @@ class Client:
         print(tabulate(table, headers=headers))
 
     def send_msg(self, msg):
-        self.client.send(msg.encode(self.FORMAT))
+        self.client.send(msg)
 
     def get_msg(self):
         try:
-            msg = self.client.recv(self.MAX_LENGTH).decode(self.FORMAT)
+            msg = self.client.recv(self.MAX_LENGTH)
             return msg
         except:
             print("[UNEXPECTED SERVER ERROR]")
             exit(-1)
-
-    def get_json(self):
-        try:
-            js = self.client.recv(self.MAX_LENGTH).decode(self.FORMAT)
-            dic = json.loads(js)
-            return dic
-        except:
-            print("[UNEXPECTED SERVER ERROR]")
-            exit(-1)
-
-    def send_json(self, path):
-        data = json.load(open(path, 'r'))
-        data['user'] = self.username
-        self.client.send(bytes(json.dumps(data), encoding=self.FORMAT))
 
     def start(self):
         self.run()
@@ -120,21 +130,20 @@ class Client:
     def register(self, username, password):
         self.private_key, self.public_key = set_keys()
         self.nonce = int.from_bytes(os.urandom(16), byteorder="big")
-
-        message, encrypted_message = asymmetric_encrypt({'command': 'REGISTER',
-                                                         'username': username,
-                                                         'password': password,
-                                                         'nonce': self.nonce,
-                                                         'public_key': serialize_public_key(self.public_key).decode('utf-8')},
-                                                        key=self.server_public_key)
-        signature = sign(message, self.private_key)
-        return json.dumps({'message': encrypted_message, 'signature': signature})
+        message = {'command': 'REGISTER',
+                    'username': username,
+                    'password': password,
+                    'nonce': self.nonce,
+                    'public_key': serialize_public_key(self.public_key).decode(self.FORMAT)}
+        
+        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+        return symmetric_encrypt(json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
 
     def register_response(self, response):
-        plain = asymmetric_decrypt(response['message'], self.private_key)
+        response = json.loads(symmetric_decrypt(response, self.session_cipher).decode(self.FORMAT))
         signature = response['signature']
-        if verify(plain, signature, self.server_public_key):
-            plain = json.loads(plain)
+        plain = response['message']
+        if verify(json.dumps(plain).encode(self.FORMAT), signature.encode(self.FORMAT), self.server_public_key):
             nonce = plain['nonce']
             if not nonce == self.nonce:
                 return '[UNEXPECTED SERVER ERROR]'
@@ -164,7 +173,7 @@ class Client:
         password = input('Enter password:\n')
         msg = self.register(username, password)
         self.send_msg(msg)
-        response = json.loads(self.get_msg())
+        response = self.get_msg()
         status, server_msg = self.register_response(response)
         print(server_msg)
         if status:
