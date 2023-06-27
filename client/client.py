@@ -4,10 +4,10 @@ import shutil
 import socket
 from enum import Enum
 
-from cryptography.hazmat.primitives import serialization
 from tabulate import tabulate
 
-from utils.utils import asymmetric_encrypt, set_keys, sign, asymmetric_decrypt, verify
+from utils.utils import asymmetric_encrypt, set_keys, sign, asymmetric_decrypt, verify, save_key, \
+    load_server_public_key, serialize_public_key
 
 
 class Menu(Enum):
@@ -25,12 +25,12 @@ class Client:
         self.ADDR = (self.SERVER, self.PORT)
         self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.client.connect(self.ADDR)
+        # TODO self.session_key
         # Exception?
         self.state = Menu.MAIN
         self.username = None
 
-        self.server_public_key = None  # TODO
-
+        self.server_public_key = load_server_public_key()  # TODO
         self.private_key = None
         self.public_key = None
 
@@ -125,15 +125,15 @@ class Client:
                                                          'username': username,
                                                          'password': password,
                                                          'nonce': self.nonce,
-                                                         'public_key': self.public_key},
+                                                         'public_key': serialize_public_key(self.public_key).decode('utf-8')},
                                                         key=self.server_public_key)
         signature = sign(message, self.private_key)
-        return json.dumps({'message': encrypted_message, 'sign': signature})
+        return json.dumps({'message': encrypted_message, 'signature': signature})
 
     def register_response(self, response):
         plain = asymmetric_decrypt(response['message'], self.private_key)
-        sign = response['sign']
-        if verify(plain, sign, self.server_public_key):
+        signature = response['signature']
+        if verify(plain, signature, self.server_public_key):
             plain = json.loads(plain)
             nonce = plain['nonce']
             if not nonce == self.nonce:
@@ -145,26 +145,17 @@ class Client:
         else:
             return False, '[UNEXPECTED SERVER ERROR]'
 
-    def save_infos(self, username, password):
-        try:
+    def save_info(self, username, password):
+        if not os.path.isdir('./keys'):
             os.mkdir('./keys')
-        except:
-            pass
 
-        try:
+        if not os.path.isdir(f'./keys/{username}'):
             os.mkdir(f'./keys/{username}')
-        except:
+        else:
             shutil.rmtree(f'./keys/{username}')
             os.mkdir(f'./keys/{username}')
 
-        pass_bytes = bytes(password)
-        pem = self.private_key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.BestAvailableEncryption(pass_bytes)
-        )
-        with open(f'./keys/{self.username}/key.pem', 'wb') as key_file:
-            key_file.write(pem)
+        save_key(self.private_key, username, password)
         self.private_key = None
         self.public_key = None
 
@@ -177,7 +168,7 @@ class Client:
         status, server_msg = self.register_response(response)
         print(server_msg)
         if status:
-            self.save_infos(username, password)
+            self.save_info(username, password)
 
     def login_menu(self):
         username = input('Enter username:\n')

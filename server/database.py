@@ -26,10 +26,16 @@ class Database:
             FOREIGN KEY(user1) REFERENCES Users(username),
             FOREIGN KEY(user2) REFERENCES Users(username));
         CREATE TABLE IF NOT EXISTS Groups(
-            id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
             owner,
-            users,
             FOREIGN KEY(owner) REFERENCES Users(username));
+        CREATE TABLE IF NOT EXISTS Group_Members(
+            group_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            PRIMARY KEY (group_id, user_id),
+            FOREIGN KEY(user_id) REFERENCES Users(username),
+            FOREIGN KEY(group_id) REFERENCES Groups(group_id));
+        
         '''
         cur.executescript(sql)
         con.close()
