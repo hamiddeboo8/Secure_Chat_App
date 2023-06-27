@@ -1,12 +1,19 @@
 import json
+import os
+import shutil
 import socket
-from tabulate import tabulate
-from parse import parse
 from enum import Enum
+
+from cryptography.hazmat.primitives import serialization
+from tabulate import tabulate
+
+from utils.utils import asymmetric_encrypt, set_keys, sign, asymmetric_decrypt, verify
+
 
 class Menu(Enum):
     MAIN = 1
     ACCOUNT = 2
+
 
 class Client:
     def __init__(self):
@@ -18,9 +25,17 @@ class Client:
         self.ADDR = (self.SERVER, self.PORT)
         self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.client.connect(self.ADDR)
+        # Exception?
         self.state = Menu.MAIN
         self.username = None
-    
+
+        self.server_public_key = None  # TODO
+
+        self.private_key = None
+        self.public_key = None
+
+        self.nonce = None
+
     def menu(self, print=True, command=None):
         if self.state == Menu.MAIN:
             if print:
@@ -32,14 +47,14 @@ class Client:
                 self.print_account_menu()
             else:
                 self.account_menu(command)
-     
+
     def print_main_menu(self):
         table = []
         headers = ["ID", "Command"]
         table.append(["1"] + ["Register"])
         table.append(["2"] + ["Login"])
         print(tabulate(table, headers=headers))
-    
+
     def print_account_menu(self):
         print(f'Hello {self.username}!')
         table = []
@@ -93,7 +108,7 @@ class Client:
                 continue
             self.menu(print=False, command=command)
         print("Aborting...")
-    
+
     def main_menu(self, command):
         if command == '1':
             self.register_menu()
@@ -101,25 +116,78 @@ class Client:
             self.login_menu()
         else:
             print("Invalid command")
-    
+
+    def register(self, username, password):
+        self.private_key, self.public_key = set_keys()
+        self.nonce = int.from_bytes(os.urandom(16), byteorder="big")
+
+        message, encrypted_message = asymmetric_encrypt({'command': 'REGISTER',
+                                                         'username': username,
+                                                         'password': password,
+                                                         'nonce': self.nonce,
+                                                         'public_key': self.public_key},
+                                                        key=self.server_public_key)
+        signature = sign(message, self.private_key)
+        return json.dumps({'message': encrypted_message, 'sign': signature})
+
+    def register_response(self, response):
+        plain = asymmetric_decrypt(response['message'], self.private_key)
+        sign = response['sign']
+        if verify(plain, sign, self.server_public_key):
+            plain = json.loads(plain)
+            nonce = plain['nonce']
+            if not nonce == self.nonce:
+                return '[UNEXPECTED SERVER ERROR]'
+            status = plain['status']
+            if not status:
+                return False, plain['message']
+            return True, plain['message']
+        else:
+            return False, '[UNEXPECTED SERVER ERROR]'
+
+    def save_infos(self, username, password):
+        try:
+            os.mkdir('./keys')
+        except:
+            pass
+
+        try:
+            os.mkdir(f'./keys/{username}')
+        except:
+            shutil.rmtree(f'./keys/{username}')
+            os.mkdir(f'./keys/{username}')
+
+        pass_bytes = bytes(password)
+        pem = self.private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.BestAvailableEncryption(pass_bytes)
+        )
+        with open(f'./keys/{self.username}/key.pem', 'wb') as key_file:
+            key_file.write(pem)
+        self.private_key = None
+        self.public_key = None
+
     def register_menu(self):
         username = input('Enter username:\n')
         password = input('Enter password:\n')
-        self.send_msg(f'REGISTER {username} {password}')
-        response = self.get_msg()
-        print(response)
-    
+        msg = self.register(username, password)
+        self.send_msg(msg)
+        response = json.loads(self.get_msg())
+        status, server_msg = self.register_response(response)
+        print(server_msg)
+        if status:
+            self.save_infos(username, password)
 
     def login_menu(self):
         username = input('Enter username:\n')
         password = input('Enter password:\n')
-        self.send_msg(f'LOGIN {username} {password}')
+        self.send_msg('LOGIN', username, password)
         response = self.get_msg()
         print(response)
         if response == 'SUCCESSFUL':
             self.username = username
             self.state = Menu.ACCOUNT
-    
 
     def account_menu(self, command):
         if command == '1':
@@ -130,8 +198,7 @@ class Client:
             self.logout()
         else:
             print("Invalid command")
-    
+
     def logout(self):
         self.username = None
         self.state = Menu.MAIN
-

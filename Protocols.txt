@@ -1,6 +1,6 @@
 - Register
 	- Client: send to server -> E[server public key, (user, pass, public key, nonce)] with signiture
-	- Server: send to client -> E[client public key, (nonce + 1)] with signiture
+	- Server: send to client -> E[client public key, (nonce + 1), status, message] with signiture
 	
 	- Database: (public key, user, (pass+salt) hash, salt)
 	
