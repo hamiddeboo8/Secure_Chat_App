@@ -74,11 +74,13 @@ class Server:
                 connected = False
                 continue
             elif msg_command == 'REGISTER':
-                self.register(msg, signature, conn, addr, cipher)
+                self.register(msg_json, signature, conn, addr, cipher)
             elif msg_command == 'LOGIN':
                 self.login(msg_json, signature, conn, addr, cipher)
             elif msg_command == 'LOGOUT':
                 self.logout(msg_json, signature, conn, addr, cipher)
+            elif msg_command == 'ONLINE_USERS':
+                self.send_online_users(msg_json, signature, conn, addr, cipher)
             else:
                 print('Invalid msg - ignored')
         print(f"[CLOSE CONNECTION] {addr} closed.")
@@ -125,6 +127,18 @@ class Server:
             print(f"[UNEXPECTED CLOSE CONNECTION]")
             exit(-1)
         self.users.pop(token)
+    
+    def send_online_users(self, msg_json, signature, conn, addr, cipher):
+        token = msg_json['token']
+        nonce = msg_json['nonce']
+        users = []
+        for user in self.users.items():
+            users.append(user[1][0])
+        message = {'status': True, 'message': 'OK', 'nonce': nonce, 'users':users}
+        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+        response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
+        self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
+        
 
     def login(self, msg_json, signature, conn, addr, cipher):
         nonce1 = msg_json['nonce']
