@@ -81,7 +81,7 @@ class Client:
         print(f'Hello {self.username}!')
         table = []
         headers = ["ID", "Command"]
-        table.append(["1"] + ["Connection"])
+        table.append(["1"] + ["Establish"])
         table.append(["2"] + ["Direct Chat"])
         table.append(["3"] + ["Create Group"])
         table.append(["4"] + ["Add Member"])
@@ -244,10 +244,63 @@ class Client:
             self.state = Menu.ACCOUNT
             self.token = params[0]
         return valid, result
+    
+    def establish(self, target_username):
+        def f_response1(plain, nonce):
+            if not plain['nonce'] == nonce:
+                return False, '[UNEXPECTED SERVER ERROR]', []
+            return plain['status'], plain['message'], [plain['target_public_key']]
+        def f_response2(plain, nonce):
+            if not plain['nonce'] == nonce:
+                return False, '[UNEXPECTED SERVER ERROR]', []
+            return plain['status'], plain['message'], []
+        
+        nonce1 = int.from_bytes(os.urandom(16), byteorder="big")
+        message = {'command': 'ESTABLISH',
+                   'token': self.token,
+                   'target_username': target_username,
+                   'nonce': nonce1}
+        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+        msg = symmetric_encrypt(json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
+        self.send_msg(msg)
+
+        response = self.get_msg()
+        valid, result, params = self.check_response(response, f_response=f_response1, nonce=nonce1)
+        if not valid:
+            return False, result
+        
+        target_public_key = params[0]
+        target_public_key = deserialize_public_key(target_public_key.encode(self.FORMAT))
+
+        key, iv, _ = set_key()
+        key = asymmetric_encrypt(key, target_public_key).decode(self.FORMAT)
+        iv = asymmetric_encrypt(iv, target_public_key).decode(self.FORMAT)
+        print(key, iv)
+
+        nonce2 = int.from_bytes(os.urandom(16), byteorder="big")
+        message = {'nonce': nonce2,
+                   'preshared_key': key,
+                   'preshared_iv': iv}
+        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+        msg = symmetric_encrypt(json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
+        self.send_msg(msg)
+
+        response = self.get_msg()
+        valid, result, params = self.check_response(response, f_response=f_response2, nonce=nonce2)
+        if not valid:
+            return False, result
+
+        return valid, result
+
+    
+    def establish_menu(self):
+        target_username = input('Enter target username:\n')
+        _, server_msg = self.establish(target_username)
+        print(server_msg)
 
     def account_menu(self, command):
         if command == '1':
-            pass
+            self.establish_menu()
         elif command == '2':
             pass
         elif command == '8':

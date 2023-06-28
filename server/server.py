@@ -74,11 +74,13 @@ class Server:
                 connected = False
                 continue
             elif msg_command == 'REGISTER':
-                self.register(msg, signature, conn, addr, cipher)
+                self.register(msg_json, signature, conn, addr, cipher)
             elif msg_command == 'LOGIN':
                 self.login(msg_json, signature, conn, addr, cipher)
             elif msg_command == 'LOGOUT':
                 self.logout(msg_json, signature, conn, addr, cipher)
+            elif msg_command == 'ESTABLISH':
+                self.establish(msg_json, signature, conn, addr, cipher)
             else:
                 print('Invalid msg - ignored')
         print(f"[CLOSE CONNECTION] {addr} closed.")
@@ -171,5 +173,58 @@ class Server:
         
         with self.lock:
             self.users[token] = (username, conn, addr)
+
+    def establish(self, msg_json, signature, conn, addr, cipher):
+        nonce1 = msg_json['nonce']
+        target_username = msg_json['target_username']
+        token = msg_json['token']
+
+        username = self.users[token][0]
+        public_key = deserialize_public_key(self.database.get_public_key(username).encode(self.FORMAT))
+        if not verify(json.dumps(msg_json).encode(self.FORMAT), signature.encode(self.FORMAT), public_key):
+            message = {'status': False, 'message': 'NOT VERIFIED', 'nonce': nonce1, 'target_public_key': None}
+            signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+            response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
+            self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
+            return
+        
+        if not self.database.has_user(target_username):
+            message = {'status': False, 'message': 'USERNAME NOT FOUND', 'nonce': nonce1, 'target_public_key': None}
+            signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+            response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
+            self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
+            return
+        
+        target_public_key = self.database.get_public_key(target_username)
+        
+        message = {'status': True, 'message': 'OK', 'nonce': nonce1, 'target_public_key':target_public_key}
+        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+        response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
+        self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
+
+
+        msg = self.get_msg(conn, addr)
+        msg = json.loads(symmetric_decrypt(msg, cipher).decode(self.FORMAT))
+        msg_json, signature = msg['message'], msg['signature']
+
+        if not verify(json.dumps(msg_json).encode(self.FORMAT), signature.encode(self.FORMAT), public_key):
+            message = {'status': False, 'message': 'NOT VERIFIED', 'nonce': nonce1}
+            signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+            response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
+            self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
+            return
+        
+        preshared_key = msg_json['preshared_key']
+        preshared_iv = msg_json['preshared_iv']
+        nonce2 = msg_json['nonce']
+
+        print(preshared_key, preshared_iv)
+
+        message = {'status': True, 'message': 'OK', 'nonce': nonce2}
+        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+        response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
+        self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
+        
+
 
 
