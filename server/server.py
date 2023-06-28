@@ -6,8 +6,7 @@ import threading
 
 from parse import parse
 from .database import Database
-from utils.utils import asymmetric_encrypt, set_keys, sign, asymmetric_decrypt, verify, save_server_keys, \
-    load_server_keys, deserialize_public_key, get_cipher, symmetric_decrypt, symmetric_encrypt
+from utils.utils import *
 
 
 class Server:
@@ -27,10 +26,11 @@ class Server:
             save_server_keys(self.private_key, self.public_key)
         else:
             self.private_key, self.public_key = load_server_keys()
-        print('server public key: ', self.public_key)
+        print('Server public key found')
         self.database = Database()
 
-        self.users = {}  # username -> (conn, addr) TODO: change maybe
+        self.lock = threading.Lock() # lock for users dict
+        self.users = {}  # token -> (username, conn, addr) TODO: change maybe
 
     def get_msg(self, conn, addr):
         try:
@@ -67,22 +67,20 @@ class Server:
         while connected:
             msg = self.get_msg(conn, addr)
             msg = json.loads(symmetric_decrypt(msg, cipher).decode(self.FORMAT))
-            try:
-                msg_json, signature = msg['message'], msg['signature']
-            except TypeError:
-                print(f"[UNEXPECTED CLOSE CONNECTION] {addr}")
-                exit(-1)
+            msg_json, signature = msg['message'], msg['signature']
 
             msg_command = msg_json['command']
-            if msg_command == 'REGISTER':
-                response = self.register(msg_json, signature)
-
             if msg_command == self.DISCONNECT_MESSAGE:
                 connected = False
                 continue
+            elif msg_command == 'REGISTER':
+                self.register(msg, signature, conn, addr, cipher)
+            elif msg_command == 'LOGIN':
+                self.login(msg_json, signature, conn, addr, cipher)
+            elif msg_command == 'LOGOUT':
+                self.logout(msg_json, signature, conn, addr, cipher)
             else:
                 print('Invalid msg - ignored')
-            self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
         print(f"[CLOSE CONNECTION] {addr} closed.")
 
     def start(self):
@@ -94,7 +92,7 @@ class Server:
             thread.start()
             print(f"[ACTIVE CONNECTIONS] {threading.active_count() - 1}")
 
-    def register(self, msg_json, signature):
+    def register(self, msg_json, signature, conn, addr, cipher):
         username = msg_json['username']
         password = msg_json['password']
         nonce = msg_json['nonce']
@@ -107,26 +105,71 @@ class Server:
         message = {'status': save_status, 'message': msg, 'nonce': nonce}
         signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
         response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
-        return response
+        self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
 
     def save_user(self, username, password, public_key):
         if self.database.has_user(username):
             return False, 'USERNAME ALREADY EXISTS'
         salt = int.from_bytes(os.urandom(8), byteorder="big")
+        salt = str(salt)
         salty_password = f'{password}_{salt}'
         h_password = hashlib.sha256(salty_password.encode(self.FORMAT)).hexdigest()
         self.database.insert_user(username=username, h_password=h_password, public_key=public_key, salt=salt)
         return True, 'REGISTER SUCCESSFUL'
 
-    def login(self, msg, conn, addr):
-        parsed = parse("LOGIN {} {}", msg)
-        username = parsed[0]
-        password = parsed[1]  # TODO: hash password
-        if self.database.has_user(username):
-            if self.database.check_password(username, password):
-                self.users[username] = (conn, addr)
-                self.send_msg('SUCCESSFUL', conn, addr)
-            else:
-                self.send_msg('WRONG PASSWORD', conn, addr)
-        else:
-            self.send_msg('USERNAME NOT EXISTS', conn, addr)
+    def logout(self, msg_json, signature, conn, addr, cipher):
+        token = msg_json['token']
+        username = self.users[token][0]
+        public_key = deserialize_public_key(self.database.get_public_key(username).encode(self.FORMAT))
+        if not verify(json.dumps(msg_json).encode(self.FORMAT), signature.encode(self.FORMAT), public_key):
+            print(f"[UNEXPECTED CLOSE CONNECTION]")
+            exit(-1)
+        self.users.pop(token)
+
+    def login(self, msg_json, signature, conn, addr, cipher):
+        nonce1 = msg_json['nonce']
+        username = msg_json['username']
+        if not self.database.has_user(username):
+            message = {'status': False, 'message': 'USERNAME NOT FOUND', 'nonce': None}
+            signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+            response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
+            self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
+            return
+        salt = self.database.get_salt(username)
+        public_key = deserialize_public_key(self.database.get_public_key(username).encode(self.FORMAT))
+        if not verify(json.dumps(msg_json).encode(self.FORMAT), signature.encode(self.FORMAT), public_key):
+            message = {'status': False, 'message': 'NOT VERIFIED', 'nonce': None}
+            signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+            response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
+            self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
+            return
+        
+        nonce2 = int.from_bytes(os.urandom(16), byteorder="big")
+        message = {'status': True, 'message': 'OK', 'nonce': nonce2, 'salt':salt}
+        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+        response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
+        self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
+
+        msg = self.get_msg(conn, addr)
+        msg = json.loads(symmetric_decrypt(msg, cipher).decode(self.FORMAT))
+        msg_json, signature = msg['message'], msg['signature']
+        hh_password = msg_json['hh_password']
+        h_password = self.database.get_password(username)
+        nh_password = f'{h_password}_{nonce2}'
+        real_hh_password = hashlib.sha256(nh_password.encode(self.FORMAT)).hexdigest()
+        if hh_password != real_hh_password:
+            message = {'status': False, 'message': 'WRONG PASSWORD', 'nonce': nonce1}
+            signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+            response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
+            self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
+            return
+        token = int.from_bytes(os.urandom(16), byteorder="big")
+        message = {'token': token, 'status': True, 'message': 'OK', 'nonce': nonce1}
+        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+        response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
+        self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
+        
+        with self.lock:
+            self.users[token] = (username, conn, addr)
+
+

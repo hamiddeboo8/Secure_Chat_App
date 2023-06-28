@@ -3,11 +3,9 @@ import os
 import shutil
 import socket
 from enum import Enum
-
+import hashlib
 from tabulate import tabulate
-
-from utils.utils import asymmetric_encrypt, set_keys, set_key, sign, asymmetric_decrypt, verify, save_key, \
-    load_server_public_key, serialize_public_key, symmetric_decrypt, symmetric_encrypt
+from utils.utils import *
 
 
 class Menu(Enum):
@@ -27,9 +25,10 @@ class Client:
         self.client.connect(self.ADDR)
 
         self.session_key, self.session_iv, self.session_cipher = set_key()
-        # Exception?
+        
         self.state = Menu.MAIN
         self.username = None
+        self.token = None
 
         self.server_public_key = load_server_public_key()  # TODO
 
@@ -38,7 +37,6 @@ class Client:
         self.private_key = None
         self.public_key = None
 
-        self.nonce = None
 
     def handshake(self):
         nonce = int.from_bytes(os.urandom(16), byteorder="big")
@@ -107,15 +105,24 @@ class Client:
     def start(self):
         self.run()
 
+    def exit(self):
+        message = {'command': self.DISCONNECT_MESSAGE}
+        msg = symmetric_encrypt(json.dumps({'message': message, 'signature': ''}).encode(self.FORMAT), self.session_cipher)
+        self.send_msg(msg)
+
+
     def run(self):
         connected = True
         while connected:
             self.menu(print=True)
             command = input()
             if command == 'exit':
-                connected = False
-                self.send_msg(self.DISCONNECT_MESSAGE)
-                continue
+                if not self.token:
+                    connected = False
+                    self.exit()
+                    continue
+                else:
+                    print("Please logout first")
             self.menu(print=False, command=command)
         print("Aborting...")
 
@@ -128,31 +135,35 @@ class Client:
             print("Invalid command")
 
     def register(self, username, password):
+        def f_response(plain, nonce):
+            if not plain['nonce'] == nonce:
+                return False, '[UNEXPECTED SERVER ERROR]'
+            return plain['status'], plain['message'], []
+        
         self.private_key, self.public_key = set_keys()
-        self.nonce = int.from_bytes(os.urandom(16), byteorder="big")
+        nonce = int.from_bytes(os.urandom(16), byteorder="big")
         message = {'command': 'REGISTER',
                     'username': username,
                     'password': password,
-                    'nonce': self.nonce,
+                    'nonce': nonce,
                     'public_key': serialize_public_key(self.public_key).decode(self.FORMAT)}
         
         signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
-        return symmetric_encrypt(json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
+        msg = symmetric_encrypt(json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
+        self.send_msg(msg)
+        response = self.get_msg()
 
-    def register_response(self, response):
+        status, msg, _ = self.check_response(response, f_response, nonce)
+        return status, msg
+
+    def check_response(self, response, f_response, nonce=None):
         response = json.loads(symmetric_decrypt(response, self.session_cipher).decode(self.FORMAT))
         signature = response['signature']
         plain = response['message']
         if verify(json.dumps(plain).encode(self.FORMAT), signature.encode(self.FORMAT), self.server_public_key):
-            nonce = plain['nonce']
-            if not nonce == self.nonce:
-                return '[UNEXPECTED SERVER ERROR]'
-            status = plain['status']
-            if not status:
-                return False, plain['message']
-            return True, plain['message']
+            return f_response(plain, nonce)
         else:
-            return False, '[UNEXPECTED SERVER ERROR]'
+            return False, '[UNEXPECTED SERVER ERROR]', []
 
     def save_info(self, username, password):
         if not os.path.isdir('./keys'):
@@ -171,10 +182,7 @@ class Client:
     def register_menu(self):
         username = input('Enter username:\n')
         password = input('Enter password:\n')
-        msg = self.register(username, password)
-        self.send_msg(msg)
-        response = self.get_msg()
-        status, server_msg = self.register_response(response)
+        status, server_msg = self.register(username, password)
         print(server_msg)
         if status:
             self.save_info(username, password)
@@ -182,12 +190,60 @@ class Client:
     def login_menu(self):
         username = input('Enter username:\n')
         password = input('Enter password:\n')
-        self.send_msg('LOGIN', username, password)
+        key_path = os.path.join('keys', username, 'key.pem')
+        if not os.path.isfile(key_path):
+            print(f'NO KEY FOR {username}')
+            return   
+        try:
+            private_key, public_key = get_keys(key_path, password)
+        except Exception:
+            print(f"WRONG PASSWORD")
+            return
+        self.private_key = private_key
+        self.public_key = public_key
+        status, server_msg = self.login(username, password)
+        print(server_msg)
+    
+    def login(self, username, password):
+        def f_response1(plain, nonce):
+            return True, None, [plain['salt'], plain['nonce']]
+        def f_response2(plain, nonce):
+            if not plain['nonce'] == nonce:
+                return False, '[UNEXPECTED SERVER ERROR]', []
+            return plain['status'], plain['message'], [plain['token']]
+        
+        nonce1 = int.from_bytes(os.urandom(16), byteorder="big")
+        message = {'command': 'LOGIN',
+                   'username': username,
+                   'nonce': nonce1}
+        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+        msg = symmetric_encrypt(json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
+        self.send_msg(msg)
+
         response = self.get_msg()
-        print(response)
-        if response == 'SUCCESSFUL':
+        valid, result, params = self.check_response(response, f_response=f_response1)
+        if not valid:
+            return False, result
+        salt, nonce2 = params[0], params[1]
+
+        salt = str(salt)
+        salty_password = f'{password}_{salt}'
+        h_salty_password = hashlib.sha256(salty_password.encode(self.FORMAT)).hexdigest()
+        h_password = f'{h_salty_password}_{nonce2}'
+        hh_password = hashlib.sha256(h_password.encode(self.FORMAT)).hexdigest()
+        message = {'hh_password': hh_password}
+        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+        msg = symmetric_encrypt(json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
+        self.send_msg(msg)
+
+        response = self.get_msg()
+        valid, result, params = self.check_response(response, f_response=f_response2, nonce=nonce1)
+
+        if valid:
             self.username = username
             self.state = Menu.ACCOUNT
+            self.token = params[0]
+        return valid, result
 
     def account_menu(self, command):
         if command == '1':
@@ -200,5 +256,13 @@ class Client:
             print("Invalid command")
 
     def logout(self):
+        message = {'command': 'LOGOUT', 'token': self.token}
+        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+        msg = symmetric_encrypt(json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
+        self.send_msg(msg)
+
         self.username = None
+        self.token = None
         self.state = Menu.MAIN
+        self.private_key = None
+        self.public_key = None

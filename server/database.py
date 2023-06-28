@@ -54,6 +54,26 @@ class Database:
         rows = cur.fetchall()
         con.close()
         return len(rows) > 0
+
+    def get_public_key(self, username):
+        con = sqlite3.connect(self.db_path)
+        cur = con.cursor()
+        cur.execute("SELECT public_key FROM Users WHERE username=?", (username,))
+        rows = cur.fetchall()
+        if len(rows) == 0:
+            return False
+        con.close()
+        return rows[0][0]
+    
+    def get_salt(self, username):
+        con = sqlite3.connect(self.db_path)
+        cur = con.cursor()
+        cur.execute("SELECT salt FROM Users WHERE username=?", (username,))
+        rows = cur.fetchall()
+        if len(rows) == 0:
+            return False
+        con.close()
+        return rows[0][0]
     
     def check_password(self, username, h_password):
         con = sqlite3.connect(self.db_path)
@@ -65,3 +85,13 @@ class Database:
         real_h_password = rows[0][0]
         con.close()
         return h_password == real_h_password
+    
+    def get_password(self, username):
+        con = sqlite3.connect(self.db_path)
+        cur = con.cursor()
+        cur.execute("SELECT h_password FROM Users WHERE username=?", (username,))
+        rows = cur.fetchall()
+        if len(rows) == 0:
+            return False
+        con.close()
+        return rows[0][0]

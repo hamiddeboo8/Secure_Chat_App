@@ -1,12 +1,14 @@
 - Register
 	- Client: send to server -> E[server public key, (user, pass, public key, nonce)] with signiture
-	- Server: send to client -> E[client public key, (nonce + 1), status, message] with signiture
+	- Server: send to client -> E[client public key, (nonce, msg, status), status, message] with signiture
 	
 	- Database: (public key, user, (pass+salt) hash, salt)
 	
 - Login
-	- Client: send to server -> E[server public key, (user, pass, nonce)] with signiture
-	- Server: send to client -> E[client public key, (token, nonce + 1)] with signiture
+	- Client: send to server -> E[server public key, (user, nonce1)] with signature
+	- Server: send to clinet -> E[server public key, (nonce2, salt)] with signature
+	- Client: send to server -> E[server public key, (h(h(password_salt)_nonce2))] with signature
+	- Server: send to client -> E[client public key, (token, nonce1, status, msg)] with signature
 	
 - Establish Connection Between 2 Clients:
 	- Client 1: send to server  -> E[server public key, (token1, user1, user2, nonce1)] with validation

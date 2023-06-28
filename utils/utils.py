@@ -137,3 +137,11 @@ def load_server_public_key():
             key_file.read()
         )
     return public_key
+
+def get_keys(key_path, password):
+    with open(key_path, 'rb') as key_file:
+        private_key = serialization.load_pem_private_key(
+            key_file.read(),
+            password=bytes(password, 'utf-8'),
+        )
+    return private_key, private_key.public_key()
