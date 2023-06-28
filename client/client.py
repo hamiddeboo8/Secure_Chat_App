@@ -75,10 +75,10 @@ class Client:
         headers = ["ID", "Command"]
         table.append(["1"] + ["Register"])
         table.append(["2"] + ["Login"])
+        print()
         print(tabulate(table, headers=headers))
 
     def print_account_menu(self):
-        print(f'Hello {self.username}!')
         table = []
         headers = ["ID", "Command"]
         table.append(["1"] + ["Establish"])
@@ -89,6 +89,8 @@ class Client:
         table.append(["6"] + ["Online Users"])
         table.append(["7"] + ["Remove Member"])
         table.append(["8"] + ["Logout"])
+        print()
+        print(f'Hello {self.username}!')
         print(tabulate(table, headers=headers))
 
     def send_msg(self, msg):
@@ -120,9 +122,9 @@ class Client:
                 if not self.token:
                     connected = False
                     self.exit()
-                    continue
                 else:
                     print("Please logout first")
+                continue
             self.menu(print=False, command=command)
         print("Aborting...")
 
@@ -206,7 +208,7 @@ class Client:
     
     def login(self, username, password):
         def f_response1(plain, nonce):
-            return True, None, [plain['salt'], plain['nonce']]
+            return plain['status'], plain['message'], [plain['salt'], plain['nonce']]
         def f_response2(plain, nonce):
             if not plain['nonce'] == nonce:
                 return False, '[UNEXPECTED SERVER ERROR]', []
@@ -303,6 +305,8 @@ class Client:
             self.establish_menu()
         elif command == '2':
             pass
+        elif command == '6':
+            self.show_online_users()
         elif command == '8':
             self.logout()
         else:
@@ -319,3 +323,24 @@ class Client:
         self.state = Menu.MAIN
         self.private_key = None
         self.public_key = None
+    
+    def show_online_users(self):
+        def f_response(plain, nonce):
+            return plain['status'], plain['message'], plain['users']
+        nonce = int.from_bytes(os.urandom(16), byteorder="big")
+        message = {'command': 'ONLINE_USERS', 'token': self.token, 'nonce':nonce}
+        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+        msg = symmetric_encrypt(json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
+        self.send_msg(msg)
+        response = self.get_msg()
+        status, msg, users = self.check_response(response, f_response=f_response)
+        if not status:
+            print('UNKNOWN SERVER ERROR')
+            return
+        table = []
+        headers = ["Online", "Users"]
+        for i in range(0, len(users), 2):
+            u = users[i+1] if i+1<len(users) else ''
+            table.append([users[i]] + [u])
+        print(tabulate(table, headers=headers))
+        
