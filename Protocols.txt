@@ -11,10 +11,10 @@
 	- Server: send to client -> E[client public key, (token, nonce1, status, msg)] with signature
 	
 - Establish Connection Between 2 Clients:
-	- Client 1: send to server  -> E[server public key, (token1, user1, user2, nonce1)] with validation
-	- Server:   send to client1 -> E[client1 public key, (user1, user2, nonce1 + 1, client2 public key)] with validation
-	- Client 1: send to server  -> E[server public key, (token1, user1, user2, nonce2, E[client2 public key, (user1, session_key)])]
-	- Server:	send to client1 -> E[client1 public key, (user1, nonce2+1)]
+	- Client 1: send to server  -> E[server public key, (token1, user2, nonce1)] with validation
+	- Server:   send to client1 -> E[client1 public key, (nonce1, client2 public key)] with validation
+	- Client 1: send to server  -> E[server public key, (nonce2, E[client2 public key, (user1, session_key)])]
+	- Server:	send to client1 -> E[client1 public key, (nonce2)]
 	
 	- Database: insert into queue of messages to be sent (user1, user2, E[client2 public key, (user1, session_key)], Time, Hash)
 	whenever client2 is online
