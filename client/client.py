@@ -2,9 +2,12 @@ import json
 import os
 import shutil
 import socket
+from datetime import datetime
 from enum import Enum
 import hashlib
 from tabulate import tabulate
+
+from client.file import make_message
 from utils.utils import *
 
 
@@ -253,6 +256,45 @@ class Client:
         _, server_msg = self.direct(target_username, text_message)
         print(server_msg)
 
+    def update_direct(self):
+        def f_response(plain, nonce):
+            if not plain['nonce'] == nonce:
+                return False, '[UNEXPECTED SERVER ERROR]', []
+            return plain['status'], plain['message'], [plain['nonce_2'], plain['updated_messages']]
+
+        nonce = int.from_bytes(os.urandom(16), byteorder="big")
+        message = json.dumps({'command': 'UPDATE',
+                              'token': self.token,
+                              'group_id': None,
+                              'nonce': nonce})
+        signature = sign(message.encode(self.FORMAT), self.private_key)
+        msg = symmetric_encrypt(
+            json.dumps({'message': json.loads(message), 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT),
+            self.session_cipher)
+        self.send_msg(msg)
+
+        response = self.get_msg()
+        status, msg, params = self.check_response(response, f_response, nonce)
+        print(msg)
+
+        if status:
+            nonce = params[0]
+            updated_messages = params[1]
+            message = json.dumps({'token': self.token,
+                                  'nonce': nonce})
+            msg = symmetric_encrypt(
+                json.dumps({'message': json.loads(message),
+                            'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT),
+                self.session_cipher)
+            self.send_msg(msg)
+            for updated_message in updated_messages:
+                key = self.get_chat_cipher(updated_message['key'])
+                plain_message_json = json.loads(symmetric_decrypt(updated_message.encode(self.FORMAT), key)
+                                                .decode(self.FORMAT))
+                plain_message_json['receive_time'] = datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
+                dst_username = plain_message_json['sender']
+                make_message(self.username, dst_username, json.dumps(plain_message_json), 'receive')
+
     def direct(self, target_username, text_message):
         def f_response1(plain, nonce):
             if not plain['nonce'] == nonce:
@@ -286,13 +328,11 @@ class Client:
         
         encrypted_text_message = symmetric_encrypt(text_message.encode(self.FORMAT), cipher).decode(self.FORMAT)
         encrypted_cipher = asymmetric_encrypt(json.dumps({'key': key, 'iv': iv}).encode(self.FORMAT), target_public_key).decode(self.FORMAT)
-        signature_text_message = sign(text_message.encode(self.FORMAT), self.private_key).decode(self.FORMAT)
         print(encrypted_cipher)
         nonce2 = int.from_bytes(os.urandom(16), byteorder="big")
         message = {'nonce': nonce2,
                    'encrypted_text_message': encrypted_text_message,
-                   'encrypted_cipher': encrypted_cipher,
-                   'signature_text_message': signature_text_message}
+                   'encrypted_cipher': encrypted_cipher}
         signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
         msg = symmetric_encrypt(json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
         self.send_msg(msg)

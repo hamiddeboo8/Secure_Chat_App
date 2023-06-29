@@ -24,8 +24,6 @@ class Database:
             group_id,
             encrypted_msg NOT NULL,
             encrypted_cipher NOT NULL,
-            signature NOT NULL,
-            time NOT NULL,
             FOREIGN KEY(sender) REFERENCES Users(username),
             FOREIGN KEY(receiver) REFERENCES Users(username),
             FOREIGN KEY(group_id) REFERENCES Groups(group_id));
@@ -51,10 +49,10 @@ class Database:
         con.commit()
         con.close()
 
-    def insert_message(self, sender, receiver, encrypted_text_message, encrypted_cipher, signature_text_message, group_id=None):
+    def insert_message(self, sender, receiver, encrypted_text_message, encrypted_cipher, group_id=None):
         con = sqlite3.connect(self.db_path)
         cur = con.cursor()
-        cur.execute("INSERT INTO Messages(sender, receiver, group_id, encrypted_msg, encrypted_cipher, signature, time) VALUES(?,?,?,?,?,?,?);", (sender, receiver, group_id, encrypted_text_message, encrypted_cipher, signature_text_message, time.time(),))
+        cur.execute("INSERT INTO Messages(sender, receiver, group_id, encrypted_msg, encrypted_cipher) VALUES(?,?,?,?,?);", (sender, receiver, group_id, encrypted_text_message, encrypted_cipher,))
         con.commit()
         con.close()
     
