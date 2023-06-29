@@ -3,6 +3,7 @@ import os
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+import hashlib
 
 
 def asymmetric_decrypt(cipher_text, key):
@@ -76,6 +77,16 @@ def set_key():
 def get_cipher(key, iv):
     algorithm = algorithms.ChaCha20(key, iv)
     return Cipher(algorithm, mode=None)
+
+def encrypt_user_messages(plain_text, password):
+    h_password = hashlib.sha256(password).hexdigest()
+    cipher = get_cipher(h_password[:32].encode('latin-1'), h_password[32:48].encode('latin-1'))
+    return symmetric_encrypt(plain_text.encode('latin-1'), cipher)
+
+def decrypt_user_messages(cipher_text, password):
+    h_password = hashlib.sha256(password).hexdigest()
+    cipher = get_cipher(h_password[:32].encode('latin-1'), h_password[32:48].encode('latin-1'))
+    return symmetric_decrypt(cipher_text, cipher).decode('latin-1')
 
 def set_keys():
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=4096)

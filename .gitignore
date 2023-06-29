@@ -163,3 +163,5 @@ database.db
 
 *.pem
 *.json
+
+/data

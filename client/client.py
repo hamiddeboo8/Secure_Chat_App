@@ -14,6 +14,10 @@ from .dataframe import Dataframe
 class Menu(Enum):
     MAIN = 1
     ACCOUNT = 2
+    DIRECT = 3
+    PV = 4
+    GROUP = 5
+    GROUP_CHAT = 6
 
 
 class Client:
@@ -31,7 +35,10 @@ class Client:
         
         self.state = Menu.MAIN
         self.username = None
+        self.password = None
         self.token = None
+        self.direct_menu_users = {}
+        self.pv_username = None
 
         self.server_public_key = load_server_public_key()  # TODO
 
@@ -63,17 +70,29 @@ class Client:
             exit(-1)
 
 
-    def menu(self, print=True, command=None):
+    def menu(self, show_menu=True, command=None):
         if self.state == Menu.MAIN:
-            if print:
+            if show_menu:
                 self.print_main_menu()
             else:
                 self.main_menu(command)
         elif self.state == Menu.ACCOUNT:
-            if print:
+            if show_menu:
                 self.print_account_menu()
             else:
                 self.account_menu(command)
+        elif self.state == Menu.DIRECT:
+            if show_menu:
+                self.print_direct_menu()
+            else:
+                self.direct_menu(command)
+        elif self.state == Menu.PV:
+            if show_menu:
+                self.print_pv_menu()
+            else:
+                self.pv_menu(command)
+        if self.state != Menu.MAIN:
+            self.update()
 
     def print_main_menu(self):
         table = []
@@ -86,18 +105,41 @@ class Client:
     def print_account_menu(self):
         table = []
         headers = ["ID", "Command"]
-        table.append(["1"] + ["Establish"])
-        table.append(["2"] + ["Direct Chat"])
-        table.append(["3"] + ["Create Group"])
-        table.append(["4"] + ["Add Member"])
-        table.append(["5"] + ["Group Message"])
-        table.append(["6"] + ["Online Users"])
-        table.append(["7"] + ["Remove Member"])
-        table.append(["8"] + ["Update"])
-        table.append(["9"] + ["Logout"])
+        table.append(["1"] + ["Direct Chat"])
+        table.append(["2"] + ["Create Group"])
+        table.append(["3"] + ["Add Member"])
+        table.append(["4"] + ["Group Message"])
+        table.append(["5"] + ["Online Users"])
+        table.append(["6"] + ["Remove Member"])
+        table.append(["7"] + ["Update"])
+        table.append(["8"] + ["Logout"])
         print()
         print(f'Hello {self.username}!')
         print(tabulate(table, headers=headers))
+    
+    def print_direct_menu(self):
+        table = []
+        users = self.dataframe.get_users(self.username, self.password.encode(self.FORMAT))
+        headers = ["ID", "Command"]
+        table.append(["0"] + ["Back"])
+        table.append(["1"] + ["Message"])
+        for i, user in enumerate(users):
+            table.append([str(i+2)] + [user])
+            self.direct_menu_users[str(i+2)] = user
+        print()
+        print(tabulate(table, headers=headers))
+    
+    def print_pv_menu(self):
+        print(f'#### Private Chat with {self.pv_username} ####\n')
+        msgs = self.dataframe.get_messages(self.username, self.password.encode(self.FORMAT), self.pv_username)
+        print(tabulate(msgs, headers=["Time", "User", "Message"]))
+        print('\n###################################')
+        table = []
+        headers = ["ID", "Command"]
+        table.append(["0"] + ["Back"])
+        table.append(["1"] + ["Message"])
+        print(tabulate(table, headers=headers))
+
 
     def send_msg(self, msg):
         self.client.send(msg)
@@ -115,14 +157,13 @@ class Client:
 
     def exit(self):
         message = {'command': self.DISCONNECT_MESSAGE}
-        msg = symmetric_encrypt(json.dumps({'message': message, 'signature': ''}).encode(self.FORMAT), self.session_cipher)
-        self.send_msg(msg)
+        self.send_encrypt_msg(message, with_signature=False)
 
 
     def run(self):
         connected = True
         while connected:
-            self.menu(print=True)
+            self.menu(show_menu=True)
             command = input()
             if command == 'exit':
                 if not self.token:
@@ -131,7 +172,7 @@ class Client:
                 else:
                     print("Please logout first")
                 continue
-            self.menu(print=False, command=command)
+            self.menu(show_menu=False, command=command)
         print("Aborting...")
 
     def main_menu(self, command):
@@ -141,6 +182,59 @@ class Client:
             self.login_menu()
         else:
             print("Invalid command")
+    
+    def account_menu(self, command):
+        if command == '1':
+            self.state = Menu.DIRECT
+        elif command == '2':
+            pass
+        elif command == '5':
+            self.show_online_users()
+        elif command == '7':
+            self.update()
+        elif command == '8':
+            self.logout()
+        else:
+            print("Invalid command")
+    
+    def direct_menu(self, command):
+        if command == '0':
+            self.direct_menu_users = {}
+            self.state = Menu.ACCOUNT
+            return
+        elif command == '1':
+            reciever_username = input('Who do you want to message?\n')
+            text_message = input('Enter your message:\n')
+            _, server_msg = self.direct(reciever_username, text_message)
+            print(server_msg)
+            return
+        for i, menu_username in self.direct_menu_users.items():
+            if command == i:
+                self.state = Menu.PV
+                self.pv_username = menu_username
+                return
+        print("Invalid command")
+    
+    def pv_menu(self, command):
+        if command == '0':
+            self.pv_username = None
+            self.state = Menu.DIRECT
+            return
+        elif command == '1':
+            text_message = input('Enter your message:\n')
+            _, server_msg = self.direct(self.pv_username, text_message)
+            print(server_msg)
+            return
+        print("Invalid command")
+    
+    def send_encrypt_msg(self, message, with_signature=True):
+        if with_signature:
+            signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+            msg = symmetric_encrypt(json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
+            self.send_msg(msg)
+        else:
+            msg = symmetric_encrypt(json.dumps({'message': message, 'signature': ''}).encode(self.FORMAT), self.session_cipher)
+            self.send_msg(msg)
 
     def register(self, username, password):
         def f_response(plain, nonce):
@@ -156,9 +250,7 @@ class Client:
                     'nonce': nonce,
                     'public_key': serialize_public_key(self.public_key).decode(self.FORMAT)}
         
-        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
-        msg = symmetric_encrypt(json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
-        self.send_msg(msg)
+        self.send_encrypt_msg(message)
         response = self.get_msg()
 
         status, msg, _ = self.check_response(response, f_response, nonce)
@@ -224,9 +316,7 @@ class Client:
         message = {'command': 'LOGIN',
                    'username': username,
                    'nonce': nonce1}
-        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
-        msg = symmetric_encrypt(json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
-        self.send_msg(msg)
+        self.send_encrypt_msg(message)
 
         response = self.get_msg()
         valid, result, params = self.check_response(response, f_response=f_response1)
@@ -240,24 +330,17 @@ class Client:
         h_password = f'{h_salty_password}_{nonce2}'
         hh_password = hashlib.sha256(h_password.encode(self.FORMAT)).hexdigest()
         message = {'hh_password': hh_password}
-        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
-        msg = symmetric_encrypt(json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
-        self.send_msg(msg)
+        self.send_encrypt_msg(message)
 
         response = self.get_msg()
         valid, result, params = self.check_response(response, f_response=f_response2, nonce=nonce1)
 
         if valid:
             self.username = username
+            self.password = password
             self.state = Menu.ACCOUNT
             self.token = params[0]
         return valid, result
-
-    def direct_menu(self):
-        target_username = input('Enter target username:\n')
-        text_message = input('Enter text message:\n')
-        _, server_msg = self.direct(target_username, text_message)
-        print(server_msg)
 
     def update(self):
         def f_response(plain, nonce):
@@ -266,12 +349,10 @@ class Client:
             return plain['status'], plain['message'], [plain['nonce2'], plain['updated_messages']]
 
         nonce = int.from_bytes(os.urandom(16), byteorder="big")
-        message = json.dumps({'command': 'UPDATE',
-                              'token': self.token,
-                              'nonce': nonce})
-        signature = sign(message.encode(self.FORMAT), self.private_key)
-        msg = symmetric_encrypt(json.dumps({'message': json.loads(message), 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
-        self.send_msg(msg)
+        message = {'command': 'UPDATE',
+                   'token': self.token,
+                   'nonce': nonce}
+        self.send_encrypt_msg(message)
 
         response = self.get_msg()
         valid, result, params = self.check_response(response, f_response, nonce)
@@ -279,17 +360,14 @@ class Client:
             return False, result
         nonce2, updated_messages = params[0], params[1]
 
-        message = json.dumps({'nonce': nonce2})
-        signature = sign(message.encode(self.FORMAT), self.private_key)
-        msg = symmetric_encrypt(json.dumps({'message': json.loads(message), 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
-        self.send_msg(msg)
+        message = {'nonce': nonce2}
+        self.send_encrypt_msg(message)
 
         for updated_message in updated_messages:
             encrypted_text_message, encrypted_cipher = updated_message[0], updated_message[1]
             cipher = self.get_chat_cipher(encrypted_cipher)
             text_message = json.loads(symmetric_decrypt(encrypted_text_message.encode(self.FORMAT), cipher).decode(self.FORMAT))
-            # text_message['receive_time'] = datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
-            self.dataframe.store_message(self.username, text_message)
+            self.dataframe.store_message(self.username, text_message, self.password.encode(self.FORMAT))
 
     def get_chat_cipher(self, encrypted_cipher):
         encrypted_cipher = encrypted_cipher.encode(self.FORMAT)
@@ -313,9 +391,7 @@ class Client:
                    'token': self.token,
                    'target_username': target_username,
                    'nonce': nonce1}
-        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
-        msg = symmetric_encrypt(json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
-        self.send_msg(msg)
+        self.send_encrypt_msg(message)
 
         response = self.get_msg()
         valid, result, params = self.check_response(response, f_response=f_response1, nonce=nonce1)
@@ -331,7 +407,7 @@ class Client:
 
         formatted_message = json.dumps({'text': text_message,
                                         'sender': self.username,
-                                        'receiver': target_username,
+                                        'reciever': target_username,
                                         'group_id': None,
                                         'time': datetime.now().strftime("%m/%d/%Y, %H:%M:%S")})
         
@@ -341,42 +417,22 @@ class Client:
         message = {'nonce': nonce2,
                    'encrypted_text_message': encrypted_text_message,
                    'encrypted_cipher': encrypted_cipher}
-        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
-        msg = symmetric_encrypt(json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
-        self.send_msg(msg)
+        self.send_encrypt_msg(message)
 
         response = self.get_msg()
         valid, result, params = self.check_response(response, f_response=f_response2, nonce=nonce2)
         if not valid:
             return False, result
 
-        self.dataframe.store_message(self.username, json.loads(formatted_message))
+        self.dataframe.store_message(self.username, json.loads(formatted_message), self.password.encode(self.FORMAT))
         return valid, result
-
-
-    def account_menu(self, command):
-        if command == '1':
-            pass
-        if command == '2':
-            self.direct_menu()
-        elif command == '2':
-            pass
-        elif command == '6':
-            self.show_online_users()
-        elif command == '8':
-            self.update()
-        elif command == '9':
-            self.logout()
-        else:
-            print("Invalid command")
 
     def logout(self):
         message = {'command': 'LOGOUT', 'token': self.token}
-        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
-        msg = symmetric_encrypt(json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
-        self.send_msg(msg)
+        self.send_encrypt_msg(message)
 
         self.username = None
+        self.password = None
         self.token = None
         self.state = Menu.MAIN
         self.private_key = None
@@ -389,12 +445,11 @@ class Client:
             return plain['status'], plain['message'], plain['users']
         nonce = int.from_bytes(os.urandom(16), byteorder="big")
         message = {'command': 'ONLINE_USERS', 'token': self.token, 'nonce':nonce}
-        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
-        msg = symmetric_encrypt(json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
-        self.send_msg(msg)
+        self.send_encrypt_msg(message)
         response = self.get_msg()
         status, msg, users = self.check_response(response, f_response=f_response, nonce=nonce)
         if not status:
+            print(msg)
             print('UNKNOWN SERVER ERROR')
             return
         table = []
