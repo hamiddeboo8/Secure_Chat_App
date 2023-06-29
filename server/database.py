@@ -104,3 +104,19 @@ class Database:
             return False
         con.close()
         return rows[0][0]
+    
+    def get_messages(self, receiver):
+        con = sqlite3.connect(self.db_path)
+        cur = con.cursor()
+        cur.execute("SELECT encrypted_msg, encrypted_cipher FROM Messages WHERE receiver=?", (receiver,))
+        rows = cur.fetchall()
+        con.close()
+        return rows
+    
+    def delete_messages(self, receiver):
+        con = sqlite3.connect(self.db_path)
+        cur = con.cursor()
+        cur.execute(f'DELETE FROM Messages WHERE receiver=?', (receiver,))
+        con.commit()
+        con.close()
+        return True
