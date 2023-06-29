@@ -6,7 +6,13 @@
 	- Client: E[K, (user, pass, public key, nonce), with signature] 
 	- Server: E[K, (nonce, msg, status), with signature]
 	
-	- Database: (public key, user, hash(pass+salt), salt)
+	- Database: insert users(public key, user, hash(pass+salt), salt)
+
+- Key Renewal:
+	- Client: E[K, (token, pass, public key, nonce), with signature] 
+	- Server: E[K, (nonce, msg, status), with signature]
+	
+	- Database: update users(public key, user, hash(pass+salt), salt)
 	
 - Login:
 	- Client: E[K, (user, nonce1), with signature] 
@@ -35,48 +41,34 @@
 	- Server: E[K, (updated_messages, nonce1, nonce2)]
 	- Client: E[K, (nonce2)]
 
+	- Database: delete message where receiver=username
+
 - Create Group:
-	- Client: E[K, (token1, infos, nonce)], generate Group Key + validation things
-	- Server: E[K, (nonce+1, group_id)]
-	- Database: insert group (admin_id, group_id, users=[])
+	- Client: E[K, (token, group_id, nonce) with signature]
+	- Server: E[K, (status, msg, nonce) with signature]
+
+	- Database: insert groups (group_id, username)
+	- Database: insert groups_member(group_id, username)
 
 - Add Member:
-	- Client 1: E[K, (token1, user1, user2, group_id, nonce1)] with validation
-	- Server:   E[client1 public key, (user1, user2, nonce1 + 1, client2 public key)] with validation
-	- Client 1: E[K, (token1, user1, user2, nonce2, E[client2 public key, (user1, group_key)])]
-	- Server:	 E[client1 public key, (user1, nonce2+1)]
+	- Client: E[K, (token, username, group_id, nonce) with signature]
+	- Server: E[K, (status, msg, nonce) with signature]
 	
-	- Database: insert into queue of messages to be sent (user1, user2, E[client2 public key, (user1, group_key)], Time, Hash)
-	whenever client2 is online
-	
-	- Server:	  E[client2 public key, (client1 public key, E[client2 public key, (user1, group_key)], Hash(user1, group_key), Time, nonce)] 
-	- Client 2:   E[K, (token2, nonce + 1, E[group_key, (user1, user2)])]
-	
-	- Database: add user2 to group
-	
-	- Database: insert into queue of messages to be sent (user2, user1, E[group_key, (user1, user2)], Time, Hash)
-	whenever client1 is online
-	
-	- Server:     E[client1 public key, (E[group_key, (user1, user2)], Time, Hash, nonce)]
-	- Client 1:   E[K, (nonce+1, token1)]
+	- Database: insert groups_member(group_id, username)
+
+- Remove Member:
+	- Client: E[K, (token, username, group_id, nonce) with signature]
+	- Server: E[K, (status, msg, nonce) with signature]
+
+	- Database: delete groups_member(group_id, username)
 	
 - Messaging in Group:
-	- Client: 	  E[K, (token, user, group_id, nonce, E[group_key, (message, user)])]
-	- Server:	  E[K, (user, nonce+1)]
+	- Client: E[K, (token, group_id, nonce) with signature]
+	- Server: E[K, (status, msg, nonce, public_username_list) with signature]
+
+	for all users in list:
+		- Client: E[K, (nonce_i, E[K_i, formatted_message], E[public_key_i, K_i]), with signature]
+		- Server: E[K, (msg, status, nonce_i), with signature]
+
+		- insert message (sender, receiver, group=group_id, encrypted_text_message, encrypted_cipher)
 	
-	for all clients in the group:
-		- Database: insert into queue of messages to be sent (user1, user2, E[group_key, (message, user1)], Time, Hash, group_id)
-		whenever client_i is online
-		- Server:     E[client2 public key, (nonce, E[group_key, (message, user1)])]
-		- Client 2:   E[K, (token2, nonce + 1)]
-	
-- Remove Member:
-	- Client: 	E[K, (token, user_1, user_2, group_id, nonce)]
-	
-	- Database: delete user from group
-	- Server:     E[K, (user, nonce+1)]
-	for all clients in group:
-		- Database: insert into queue of messages to be sent (_, client_i, seed, Time, Hash, group_id)
-		whenever client_i is online
-		- Server:   _i  E[client2 public key, (nonce, seed, group_id)]
-		- Client 2:   E[K, (token2, nonce + 1)] and update group_key by themselves.
