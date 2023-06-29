@@ -242,7 +242,7 @@ class Server:
         self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
 
     def update(self, msg_json, signature, conn, addr, cipher):
-        nonce = msg_json['nonce']
+        nonce1 = msg_json['nonce']
         token = msg_json['token']
 
         if token not in self.users:
@@ -252,8 +252,8 @@ class Server:
             self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
             return
 
-        src_username = self.users[token][0]
-        public_key = deserialize_public_key(self.database.get_public_key(src_username).encode(self.FORMAT))
+        username = self.users[token][0]
+        public_key = deserialize_public_key(self.database.get_public_key(username).encode(self.FORMAT))
         if not verify(json.dumps(msg_json).encode(self.FORMAT), signature.encode(self.FORMAT), public_key):
            message = {'status': False, 'message': 'NOT VERIFIED', 'nonce': None}
            signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
@@ -261,33 +261,23 @@ class Server:
            self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
            return
 
-        group_id = msg_json['group_id']
-        ids, updated_messages, ciphers = self.database.get_messages(src_username, group_id)
+        updated_messages = self.database.get_messages(username)
 
-        # TODO encode ciphers
-
-        nonce_2 = int.from_bytes(os.urandom(16), byteorder="big")
+        nonce2 = int.from_bytes(os.urandom(16), byteorder="big")
         message = {'status': True, 'message': 'SUCCESSFULLY UPDATED',
-                   'updated_messages': updated_messages, 'ciphers': ciphers, 'nonce': nonce, 'nonce_2': nonce_2}
+                   'updated_messages': updated_messages, 'nonce': nonce1, 'nonce2': nonce2}
         signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
         response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
         self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
 
-        client_confirm = self.get_msg(conn, addr)
-        msg = json.loads(symmetric_decrypt(client_confirm, cipher).decode(self.FORMAT))
+        msg = self.get_msg(conn, addr)
+        msg = json.loads(symmetric_decrypt(msg, cipher).decode(self.FORMAT))
         msg_json, signature = msg['message'], msg['signature']
 
         if not verify(json.dumps(msg_json).encode(self.FORMAT), signature.encode(self.FORMAT), public_key):
-           print('NOT VERIFIED')
            return
-
-        token = msg_json['token']
-        if token not in self.users:
-            print('NOT VERIFIED TOKEN')
+        
+        if not nonce2 == msg_json['nonce']:
             return
-
-        if not nonce_2 == msg_json['nonce']:
-            print('NOT VERIFIED')
-            return
-        print('CLIENT CONFIRMED!')
-        self.database.delete_messages(ids)
+        
+        self.database.delete_messages(username)
