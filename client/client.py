@@ -384,6 +384,8 @@ class Client:
     
     def show_online_users(self):
         def f_response(plain, nonce):
+            if not plain['nonce'] == nonce:
+                return False, '[UNEXPECTED SERVER ERROR]', []
             return plain['status'], plain['message'], plain['users']
         nonce = int.from_bytes(os.urandom(16), byteorder="big")
         message = {'command': 'ONLINE_USERS', 'token': self.token, 'nonce':nonce}
