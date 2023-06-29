@@ -79,8 +79,8 @@ class Server:
                 self.login(msg_json, signature, conn, addr, cipher)
             elif msg_command == 'LOGOUT':
                 self.logout(msg_json, signature, conn, addr, cipher)
-            elif msg_command == 'ESTABLISH':
-                self.establish(msg_json, signature, conn, addr, cipher)
+            elif msg_command == 'DIRECT':
+                self.direct(msg_json, signature, conn, addr, cipher)
             elif msg_command == 'ONLINE_USERS':
                 self.send_online_users(msg_json, signature, conn, addr, cipher)
             else:
@@ -188,7 +188,7 @@ class Server:
         with self.lock:
             self.users[token] = (username, conn, addr)
 
-    def establish(self, msg_json, signature, conn, addr, cipher):
+    def direct(self, msg_json, signature, conn, addr, cipher):
         nonce1 = msg_json['nonce']
         target_username = msg_json['target_username']
         token = msg_json['token']
@@ -228,17 +228,14 @@ class Server:
             self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
             return
         
-        preshared_key = msg_json['preshared_key']
-        preshared_iv = msg_json['preshared_iv']
         nonce2 = msg_json['nonce']
+        encrypted_text_message = msg_json['encrypted_text_message']
+        encrypted_cipher = msg_json['encrypted_cipher']
+        signature_text_message = msg_json['signature_text_message']
 
-        print(preshared_key, preshared_iv)
+        self.database.insert_message(username, target_username, encrypted_text_message, encrypted_cipher, signature_text_message)
 
         message = {'status': True, 'message': 'OK', 'nonce': nonce2}
         signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
         response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
         self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
-        
-
-
-

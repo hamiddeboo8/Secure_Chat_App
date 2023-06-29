@@ -246,8 +246,14 @@ class Client:
             self.state = Menu.ACCOUNT
             self.token = params[0]
         return valid, result
-    
-    def establish(self, target_username):
+
+    def direct_menu(self):
+        target_username = input('Enter target username:\n')
+        text_message = input('Enter text message:\n')
+        _, server_msg = self.direct(target_username, text_message)
+        print(server_msg)
+
+    def direct(self, target_username, text_message):
         def f_response1(plain, nonce):
             if not plain['nonce'] == nonce:
                 return False, '[UNEXPECTED SERVER ERROR]', []
@@ -258,7 +264,7 @@ class Client:
             return plain['status'], plain['message'], []
         
         nonce1 = int.from_bytes(os.urandom(16), byteorder="big")
-        message = {'command': 'ESTABLISH',
+        message = {'command': 'DIRECT',
                    'token': self.token,
                    'target_username': target_username,
                    'nonce': nonce1}
@@ -274,15 +280,19 @@ class Client:
         target_public_key = params[0]
         target_public_key = deserialize_public_key(target_public_key.encode(self.FORMAT))
 
-        key, iv, _ = set_key()
-        key = asymmetric_encrypt(key, target_public_key).decode(self.FORMAT)
-        iv = asymmetric_encrypt(iv, target_public_key).decode(self.FORMAT)
-        print(key, iv)
-
+        key, iv, cipher = set_key()
+        key = key.decode(self.FORMAT)
+        iv = iv.decode(self.FORMAT)
+        
+        encrypted_text_message = symmetric_encrypt(text_message.encode(self.FORMAT), cipher).decode(self.FORMAT)
+        encrypted_cipher = asymmetric_encrypt(json.dumps({'key': key, 'iv': iv}).encode(self.FORMAT), target_public_key).decode(self.FORMAT)
+        signature_text_message = sign(text_message.encode(self.FORMAT), self.private_key).decode(self.FORMAT)
+        print(encrypted_cipher)
         nonce2 = int.from_bytes(os.urandom(16), byteorder="big")
         message = {'nonce': nonce2,
-                   'preshared_key': key,
-                   'preshared_iv': iv}
+                   'encrypted_text_message': encrypted_text_message,
+                   'encrypted_cipher': encrypted_cipher,
+                   'signature_text_message': signature_text_message}
         signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
         msg = symmetric_encrypt(json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
         self.send_msg(msg)
@@ -294,15 +304,12 @@ class Client:
 
         return valid, result
 
-    
-    def establish_menu(self):
-        target_username = input('Enter target username:\n')
-        _, server_msg = self.establish(target_username)
-        print(server_msg)
 
     def account_menu(self, command):
         if command == '1':
-            self.establish_menu()
+            pass
+        if command == '2':
+            self.direct_menu()
         elif command == '2':
             pass
         elif command == '6':
