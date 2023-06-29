@@ -8,6 +8,7 @@ import hashlib
 from tabulate import tabulate
 
 from utils.utils import *
+from .dataframe import Dataframe
 
 
 class Menu(Enum):
@@ -38,6 +39,8 @@ class Client:
 
         self.private_key = None
         self.public_key = None
+
+        self.dataframe = Dataframe()
 
 
     def handshake(self):
@@ -275,7 +278,7 @@ class Client:
         if not valid:
             return False, result
         nonce2, updated_messages = params[0], params[1]
-        
+
         message = json.dumps({'nonce': nonce2})
         signature = sign(message.encode(self.FORMAT), self.private_key)
         msg = symmetric_encrypt(json.dumps({'message': json.loads(message), 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
@@ -286,8 +289,7 @@ class Client:
             cipher = self.get_chat_cipher(encrypted_cipher)
             text_message = json.loads(symmetric_decrypt(encrypted_text_message.encode(self.FORMAT), cipher).decode(self.FORMAT))
             text_message['receive_time'] = datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
-            print(text_message)
-            # make_message(text_message['receiver'], text_message['sender'], json.dumps(text_message), 'receive')
+            self.dataframe.store_message(self.username, text_message)
 
     def get_chat_cipher(self, encrypted_cipher):
         encrypted_cipher = encrypted_cipher.encode(self.FORMAT)
@@ -389,7 +391,7 @@ class Client:
         msg = symmetric_encrypt(json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
         self.send_msg(msg)
         response = self.get_msg()
-        status, msg, users = self.check_response(response, f_response=f_response)
+        status, msg, users = self.check_response(response, f_response=f_response, nonce=nonce)
         if not status:
             print('UNKNOWN SERVER ERROR')
             return
