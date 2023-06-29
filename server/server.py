@@ -135,9 +135,10 @@ class Server:
     def send_online_users(self, msg_json, signature, conn, addr, cipher):
         token = msg_json['token']
         nonce = msg_json['nonce']
-        users = []
+        users = set()
         for user in self.users.items():
-            users.append(user[1][0])
+            users.add(user[1][0])
+        users = list(users)
         message = {'status': True, 'message': 'OK', 'nonce': nonce, 'users':users}
         signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
         response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
