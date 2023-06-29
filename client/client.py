@@ -288,7 +288,7 @@ class Client:
             encrypted_text_message, encrypted_cipher = updated_message[0], updated_message[1]
             cipher = self.get_chat_cipher(encrypted_cipher)
             text_message = json.loads(symmetric_decrypt(encrypted_text_message.encode(self.FORMAT), cipher).decode(self.FORMAT))
-            text_message['receive_time'] = datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
+            # text_message['receive_time'] = datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
             self.dataframe.store_message(self.username, text_message)
 
     def get_chat_cipher(self, encrypted_cipher):
@@ -337,7 +337,6 @@ class Client:
         
         encrypted_text_message = symmetric_encrypt(formatted_message.encode(self.FORMAT), cipher).decode(self.FORMAT)
         encrypted_cipher = asymmetric_encrypt(json.dumps({'key': key, 'iv': iv}).encode(self.FORMAT), target_public_key).decode(self.FORMAT)
-        print(encrypted_cipher)
         nonce2 = int.from_bytes(os.urandom(16), byteorder="big")
         message = {'nonce': nonce2,
                    'encrypted_text_message': encrypted_text_message,
@@ -351,6 +350,7 @@ class Client:
         if not valid:
             return False, result
 
+        self.dataframe.store_message(self.username, json.loads(formatted_message))
         return valid, result
 
 

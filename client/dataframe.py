@@ -4,6 +4,8 @@ import os
 class Dataframe:
     def __init__(self, df_path='data/messages'):
         self.df_path = df_path
+        if not os.path.isdir('data'):
+            os.mkdir('data')
         if not os.path.isdir(df_path):
             os.mkdir(df_path)
 
