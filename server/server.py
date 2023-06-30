@@ -91,7 +91,7 @@ class Server:
                 self.delete_member(msg_json, signature, conn, addr, cipher)
             elif msg_command == 'GROUP_MESSAGE':
                 self.group_message(msg_json, signature, conn, addr, cipher)
-            elif msg_command == 'CRATE_GROUP':
+            elif msg_command == 'CREATE_GROUP':
                 self.create_group(msg_json, signature, conn, addr, cipher)
             else:
                 print('Invalid msg - ignored')
@@ -151,13 +151,24 @@ class Server:
         signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
         response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
         self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
-        
+
+    def is_logged_in(self, username):
+        for user in list(self.users.values()):
+            if user[0] == username:
+                return True
+        return False
 
     def login(self, msg_json, signature, conn, addr, cipher):
         nonce1 = msg_json['nonce']
         username = msg_json['username']
         if not self.database.has_user(username):
-            message = {'status': False, 'message': 'USERNAME NOT FOUND', 'nonce': None}
+            message = {'status': False, 'message': 'USERNAME NOT FOUND', 'nonce': None, 'salt': None}
+            signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+            response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
+            self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
+            return
+        if self.is_logged_in(username):
+            message = {'status': False, 'message': 'LOGGED IN ALREADY!', 'nonce': None, 'salt': None}
             signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
             response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
             self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
@@ -165,14 +176,14 @@ class Server:
         salt = self.database.get_salt(username)
         public_key = deserialize_public_key(self.database.get_public_key(username).encode(self.FORMAT))
         if not verify(json.dumps(msg_json).encode(self.FORMAT), signature.encode(self.FORMAT), public_key):
-            message = {'status': False, 'message': 'NOT VERIFIED', 'nonce': None}
+            message = {'status': False, 'message': 'NOT VERIFIED', 'nonce': None, 'salt': None}
             signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
             response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
             self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
             return
         
         nonce2 = int.from_bytes(os.urandom(16), byteorder="big")
-        message = {'status': True, 'message': 'OK', 'nonce': nonce2, 'salt':salt}
+        message = {'status': True, 'message': 'OK', 'nonce': nonce2, 'salt': salt}
         signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
         response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
         self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
@@ -376,6 +387,13 @@ class Server:
             self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
             return
 
+        if not self.database.is_owner_of_group(username, group_id):
+            message = {'status': False, 'message': 'ONLY OWNER CAN DELETE MEMBERS!', 'nonce': nonce}
+            signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+            response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
+            self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
+            return
+
         if not self.database.is_member_of_group(target_username, group_id):
             message = {'status': False, 'message': 'USER IS NOT MEMBER OF THE GROUP!', 'nonce': nonce}
             signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
@@ -458,13 +476,15 @@ class Server:
         for member in members:
             public_username = {'username': member, 'public_key': self.database.get_public_key(member)}
             public_usernames.append(public_username)
-        message = {'status': True, 'message': 'OK', 'nonce': nonce, 'target_public_key': public_usernames}
+        message = {'status': True, 'message': 'OK', 'nonce': nonce, 'public_usernames': public_usernames}
         signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
         response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
         self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
 
         params = []
         for member in members:
+            if member == username:
+                continue
             msg = self.get_msg(conn, addr)
             msg = json.loads(symmetric_decrypt(msg, cipher).decode(self.FORMAT))
             msg_json, signature = msg['message'], msg['signature']

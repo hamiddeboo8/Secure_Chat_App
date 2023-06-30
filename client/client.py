@@ -30,7 +30,7 @@ class Client:
         self.client.connect(self.ADDR)
 
         self.session_key, self.session_iv, self.session_cipher = set_key()
-        
+
         self.state = Menu.MAIN
         self.username = None
         self.password = None
@@ -51,9 +51,10 @@ class Client:
 
     def handshake(self):
         nonce = int.from_bytes(os.urandom(16), byteorder="big")
-        plain_json = {'message': {'session_key': self.session_key.decode(self.FORMAT), 'session_iv': self.session_iv.decode(self.FORMAT), 'nonce':nonce}, 
+        plain_json = {'message': {'session_key': self.session_key.decode(self.FORMAT),
+                                  'session_iv': self.session_iv.decode(self.FORMAT), 'nonce': nonce},
                       'signature': ''}
-        
+
         plain = json.dumps(plain_json).encode(self.FORMAT)
 
         encrypted_message = asymmetric_encrypt(plain, self.server_public_key)
@@ -124,7 +125,7 @@ class Client:
         print()
         print(f'Hello {self.username}!')
         print(tabulate(table, headers=headers))
-    
+
     def print_direct_menu(self):
         table = []
         users = self.dataframe.get_users(self.username, self.password.encode(self.FORMAT))
@@ -132,8 +133,8 @@ class Client:
         table.append(["0"] + ["Back"])
         table.append(["1"] + ["Message"])
         for i, user in enumerate(users):
-            table.append([str(i+2)] + [user])
-            self.direct_menu_users[str(i+2)] = user
+            table.append([str(i + 2)] + [user])
+            self.direct_menu_users[str(i + 2)] = user
         print()
         print(tabulate(table, headers=headers))
 
@@ -144,8 +145,8 @@ class Client:
         table.append(["0"] + ["Back"])
         table.append(["1"] + ["Message"])
         for i, group in enumerate(groups):
-            table.append([str(i+2)] + [group])
-            self.group_menu_groups[str(i+2)] = group
+            table.append([str(i + 2)] + [group])
+            self.group_menu_groups[str(i + 2)] = group
         print()
         print(tabulate(table, headers=headers))
 
@@ -212,7 +213,7 @@ class Client:
             self.login_menu()
         else:
             print("Invalid command")
-    
+
     def account_menu(self, command):
         if command == '1':
             self.state = Menu.DIRECT
@@ -232,7 +233,7 @@ class Client:
             self.logout()
         else:
             print("Invalid command")
-    
+
     def direct_menu(self, command):
         if command == '0':
             self.direct_menu_users = {}
@@ -268,7 +269,7 @@ class Client:
                 self.group_id = menu_group_id
                 return
         print("Invalid command")
-    
+
     def pv_menu(self, command):
         if command == '0':
             self.pv_username = None
@@ -296,10 +297,13 @@ class Client:
     def send_encrypt_msg(self, message, with_signature=True):
         if with_signature:
             signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
-            msg = symmetric_encrypt(json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT), self.session_cipher)
+            msg = symmetric_encrypt(
+                json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT),
+                self.session_cipher)
             self.send_msg(msg)
         else:
-            msg = symmetric_encrypt(json.dumps({'message': message, 'signature': ''}).encode(self.FORMAT), self.session_cipher)
+            msg = symmetric_encrypt(json.dumps({'message': message, 'signature': ''}).encode(self.FORMAT),
+                                    self.session_cipher)
             self.send_msg(msg)
 
     def register(self, username, password):
@@ -307,15 +311,15 @@ class Client:
             if not plain['nonce'] == nonce:
                 return False, '[UNEXPECTED SERVER ERROR]'
             return plain['status'], plain['message'], []
-        
+
         self.private_key, self.public_key = set_keys()
         nonce = int.from_bytes(os.urandom(16), byteorder="big")
         message = {'command': 'REGISTER',
-                    'username': username,
-                    'password': password,
-                    'nonce': nonce,
-                    'public_key': serialize_public_key(self.public_key).decode(self.FORMAT)}
-        
+                   'username': username,
+                   'password': password,
+                   'nonce': nonce,
+                   'public_key': serialize_public_key(self.public_key).decode(self.FORMAT)}
+
         self.send_encrypt_msg(message)
         response = self.get_msg()
 
@@ -359,7 +363,7 @@ class Client:
         key_path = os.path.join('keys', username, 'key.pem')
         if not os.path.isfile(key_path):
             print(f'NO KEY FOR {username}')
-            return   
+            return
         try:
             private_key, public_key = get_keys(key_path, password)
         except Exception:
@@ -369,15 +373,16 @@ class Client:
         self.public_key = public_key
         status, server_msg = self.login(username, password)
         print(server_msg)
-    
+
     def login(self, username, password):
         def f_response1(plain, nonce):
             return plain['status'], plain['message'], [plain['salt'], plain['nonce']]
+
         def f_response2(plain, nonce):
             if not plain['nonce'] == nonce:
                 return False, '[UNEXPECTED SERVER ERROR]', []
             return plain['status'], plain['message'], [plain['token']]
-        
+
         nonce1 = int.from_bytes(os.urandom(16), byteorder="big")
         message = {'command': 'LOGIN',
                    'username': username,
@@ -432,26 +437,29 @@ class Client:
         for updated_message in updated_messages:
             encrypted_text_message, encrypted_cipher = updated_message[0], updated_message[1]
             cipher = self.get_chat_cipher(encrypted_cipher)
-            text_message = json.loads(symmetric_decrypt(encrypted_text_message.encode(self.FORMAT), cipher).decode(self.FORMAT))
+            text_message = json.loads(
+                symmetric_decrypt(encrypted_text_message.encode(self.FORMAT), cipher).decode(self.FORMAT))
             self.dataframe.store_message(self.username, text_message, self.password.encode(self.FORMAT))
 
     def get_chat_cipher(self, encrypted_cipher):
         encrypted_cipher = encrypted_cipher.encode(self.FORMAT)
-        cipher = json.loads(asymmetric_decrypt(encrypted_cipher, self.private_key).decode(self.FORMAT))
+        message = asymmetric_decrypt(encrypted_cipher, self.private_key).decode(self.FORMAT)
+        # TODO, DEBOO: I've seen an error and can't remake it.
+        cipher = json.loads(message)
         key, iv = cipher['key'].encode(self.FORMAT), cipher['iv'].encode(self.FORMAT)
         return get_cipher(key, iv)
-
 
     def direct(self, target_username, text_message):
         def f_response1(plain, nonce):
             if not plain['nonce'] == nonce:
                 return False, '[UNEXPECTED SERVER ERROR]', []
             return plain['status'], plain['message'], [plain['target_public_key']]
+
         def f_response2(plain, nonce):
             if not plain['nonce'] == nonce:
                 return False, '[UNEXPECTED SERVER ERROR]', []
             return plain['status'], plain['message'], []
-        
+
         nonce1 = int.from_bytes(os.urandom(16), byteorder="big")
         message = {'command': 'DIRECT',
                    'token': self.token,
@@ -463,7 +471,7 @@ class Client:
         valid, result, params = self.check_response(response, f_response=f_response1, nonce=nonce1)
         if not valid:
             return False, result
-        
+
         target_public_key = params[0]
         target_public_key = deserialize_public_key(target_public_key.encode(self.FORMAT))
 
@@ -476,9 +484,10 @@ class Client:
                                         'receiver': target_username,
                                         'group_id': None,
                                         'time': datetime.now().strftime("%m/%d/%Y, %H:%M:%S")})
-        
+
         encrypted_text_message = symmetric_encrypt(formatted_message.encode(self.FORMAT), cipher).decode(self.FORMAT)
-        encrypted_cipher = asymmetric_encrypt(json.dumps({'key': key, 'iv': iv}).encode(self.FORMAT), target_public_key).decode(self.FORMAT)
+        encrypted_cipher = asymmetric_encrypt(json.dumps({'key': key, 'iv': iv}).encode(self.FORMAT),
+                                              target_public_key).decode(self.FORMAT)
         nonce2 = int.from_bytes(os.urandom(16), byteorder="big")
         message = {'nonce': nonce2,
                    'encrypted_text_message': encrypted_text_message,
@@ -490,7 +499,8 @@ class Client:
         if not valid:
             return False, result
 
-        self.dataframe.store_message(self.username, json.loads(formatted_message), self.password.encode(self.FORMAT))
+        if not self.username == target_username:
+            self.dataframe.store_message(self.username, json.loads(formatted_message), self.password.encode(self.FORMAT))
         return valid, result
 
     def logout(self):
@@ -503,14 +513,15 @@ class Client:
         self.state = Menu.MAIN
         self.private_key = None
         self.public_key = None
-    
+
     def show_online_users(self):
         def f_response(plain, nonce):
             if not plain['nonce'] == nonce:
                 return False, '[UNEXPECTED SERVER ERROR]', []
             return plain['status'], plain['message'], plain['users']
+
         nonce = int.from_bytes(os.urandom(16), byteorder="big")
-        message = {'command': 'ONLINE_USERS', 'token': self.token, 'nonce':nonce}
+        message = {'command': 'ONLINE_USERS', 'token': self.token, 'nonce': nonce}
         self.send_encrypt_msg(message)
         response = self.get_msg()
         status, msg, users = self.check_response(response, f_response=f_response, nonce=nonce)
@@ -521,7 +532,7 @@ class Client:
         table = []
         headers = ["Online", "Users"]
         for i in range(0, len(users), 2):
-            u = users[i+1] if i+1<len(users) else ''
+            u = users[i + 1] if i + 1 < len(users) else ''
             table.append([users[i]] + [u])
         print(tabulate(table, headers=headers))
 
@@ -530,6 +541,7 @@ class Client:
             if not plain['nonce'] == nonce:
                 return False, '[UNEXPECTED SERVER ERROR]', []
             return plain['status'], plain['message'], []
+
         group_id = input("Enter The Group ID:\n")
         nonce = int.from_bytes(os.urandom(16), byteorder="big")
         message = {'command': 'CREATE_GROUP', 'token': self.token, 'group_id': group_id, 'nonce': nonce}
@@ -595,20 +607,27 @@ class Client:
 
         public_usernames = params[0]
         formatted_messages = []
+        main_formatted_message = {'text': text_message,
+                                  'sender': self.username,
+                                  'receiver': None,
+                                  'group_id': group_id,
+                                  'time': datetime.now().strftime("%m/%d/%Y, %H:%M:%S")}
         for public_username in public_usernames:
+            target_username = public_username['username']
+            if target_username == self.username:
+                continue
             public_key = public_username['public_key']
             target_public_key = deserialize_public_key(public_key.encode(self.FORMAT))
-            target_username = public_username['username']
 
             key, iv, cipher = set_key()
             key = key.decode(self.FORMAT)
             iv = iv.decode(self.FORMAT)
 
-            formatted_message = json.dumps({'text': text_message,
-                                            'sender': self.username,
+            formatted_message = json.dumps({'text': main_formatted_message['text'],
+                                            'sender': main_formatted_message['sender'],
                                             'receiver': target_username,
-                                            'group_id': group_id,
-                                            'time': datetime.now().strftime("%m/%d/%Y, %H:%M:%S")})
+                                            'group_id': main_formatted_message['group_id'],
+                                            'time': main_formatted_message['time']})
             formatted_messages.append(formatted_message)
             encrypted_text_message = symmetric_encrypt(formatted_message.encode(self.FORMAT), cipher).decode(
                 self.FORMAT)
@@ -625,7 +644,6 @@ class Client:
             if not valid:
                 return False, result
 
-        for formatted_message in formatted_messages:
-            self.dataframe.store_message(self.username, json.loads(formatted_message),
-                                         self.password.encode(self.FORMAT))
+        self.dataframe.store_message(self.username, main_formatted_message,
+                                     self.password.encode(self.FORMAT))
         return valid, result

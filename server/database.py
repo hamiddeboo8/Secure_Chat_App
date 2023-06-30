@@ -24,14 +24,13 @@ class Database:
             encrypted_msg NOT NULL,
             encrypted_cipher NOT NULL,
             FOREIGN KEY(sender) REFERENCES Users(username),
-            FOREIGN KEY(receiver) REFERENCES Users(username),
-            FOREIGN KEY(group_id) REFERENCES Groups(group_id));
+            FOREIGN KEY(receiver) REFERENCES Users(username));
         CREATE TABLE IF NOT EXISTS Groups(
-            group_id NOT NULL PRIMARY KEY,
+            group_id VARCHAR(30) NOT NULL PRIMARY KEY,
             owner,
             FOREIGN KEY(owner) REFERENCES Users(username));
         CREATE TABLE IF NOT EXISTS Group_Members(
-            group_id NOT NULL,
+            group_id VARCHAR(30) NOT NULL,
             user_id NOT NULL,
             PRIMARY KEY (group_id, user_id),
             FOREIGN KEY(user_id) REFERENCES Users(username),
@@ -51,7 +50,7 @@ class Database:
     def insert_message(self, sender, receiver, encrypted_text_message, encrypted_cipher):
         con = sqlite3.connect(self.db_path)
         cur = con.cursor()
-        cur.execute("INSERT INTO Messages(sender, receiver, encrypted_msg, encrypted_cipher) VALUES(?,?,?,?,?);", (sender, receiver, encrypted_text_message, encrypted_cipher,))
+        cur.execute("INSERT INTO Messages(sender, receiver, encrypted_msg, encrypted_cipher) VALUES(?,?,?,?);", (sender, receiver, encrypted_text_message, encrypted_cipher,))
         con.commit()
         con.close()
     
