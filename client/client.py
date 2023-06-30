@@ -565,6 +565,7 @@ class Client:
         response = self.get_msg()
         status, msg, _ = self.check_response(response, f_response=f_response, nonce=nonce)
         print(msg)
+        self.group_chat(group_id, f"'{target_username}' is added")
 
     def remove_member(self):
         def f_response(plain, nonce):
@@ -581,6 +582,7 @@ class Client:
         response = self.get_msg()
         status, msg, _ = self.check_response(response, f_response=f_response, nonce=nonce)
         print(msg)
+        self.group_chat(group_id, f"'{target_username}' is removed")
 
     def group_chat(self, group_id, text_message):
         def f_response1(plain, nonce):
