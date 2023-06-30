@@ -63,11 +63,34 @@ class Client:
         response = self.get_msg()
         response = json.loads(symmetric_decrypt(response, self.session_cipher).decode(self.FORMAT))
 
-        if response['nonce'] == nonce:
-            return
-        else:
+        if not response['nonce'] == nonce:
             print("[UNEXPECTED SERVER ERROR]")
             exit(-1)
+
+        self.dh_exchange()
+        
+
+    def dh_exchange(self):   
+        def f_response(plain, nonce):
+            if not plain['nonce'] == nonce:
+                return False, '[UNEXPECTED SERVER ERROR]'
+            return plain['status'], plain['message'], plain['dh_public_key']
+
+        self.private_key, self.public_key = set_keys()
+        nonce = int.from_bytes(os.urandom(16), byteorder="big")
+        dh_private_key = get_dh_key()
+        message = {'dh_public_key': serialize_public_key(dh_private_key.public_key()).decode(self.FORMAT),
+                   'nonce': nonce}
+
+        self.send_encrypt_msg(message)
+        response = self.get_msg()
+
+        status, msg, peer_public_key = self.check_response(response, f_response, nonce)
+        if not status:
+            print("[UNEXPECTED SERVER ERROR]")
+            exit(-1)
+        self.session_key = get_dh_shared_key(dh_private_key, deserialize_public_key(peer_public_key.encode(self.FORMAT)))
+        self.session_cipher = get_cipher(self.session_key, self.session_iv)
 
     def menu(self, show_menu=True, command=None):
         if self.state == Menu.MAIN:
