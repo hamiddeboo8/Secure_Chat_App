@@ -1,9 +1,25 @@
 import os
 
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding, rsa
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.asymmetric import padding, rsa, ec
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 import hashlib
+
+def get_dh_key():
+    private_key = ec.generate_private_key(ec.SECP384R1())
+    return private_key
+
+def get_dh_shared_key(private_key, peer_public_key):
+    shared_key = private_key.exchange(ec.ECDH(), peer_public_key)
+
+    return HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=b'handshake data',
+    ).derive(shared_key)
+
 
 
 def asymmetric_decrypt(cipher_text, key):
