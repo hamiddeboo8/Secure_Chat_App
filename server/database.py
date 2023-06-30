@@ -176,3 +176,10 @@ class Database:
         con.close()
         members = [row[0] for row in rows]
         return members
+
+    def update_user(self, username, public_key):
+        con = sqlite3.connect(self.db_path)
+        cur = con.cursor()
+        cur.execute("UPDATE Users SET public_key=? WHERE username=?", (public_key, username,))
+        con.commit()
+        con.close()

@@ -29,7 +29,7 @@ class Server:
         print('Server public key found')
         self.database = Database()
 
-        self.lock = threading.Lock() # lock for users dict
+        self.lock = threading.Lock()  # lock for users dict
         self.users = {}  # token -> (username, conn, addr) TODO: change maybe
 
     def get_msg(self, conn, addr):
@@ -50,7 +50,8 @@ class Server:
             plain = plain.decode(self.FORMAT)
             plain = json.loads(plain)
             msg = plain['message']
-            session_key, session_iv, nonce = msg['session_key'].encode(self.FORMAT), msg['session_iv'].encode(self.FORMAT), msg['nonce']
+            session_key, session_iv, nonce = msg['session_key'].encode(self.FORMAT), msg['session_iv'].encode(
+                self.FORMAT), msg['nonce']
             cipher = get_cipher(session_key, session_iv)
             response = json.dumps({'status': '', 'message': '', 'nonce': nonce})
             self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
@@ -93,6 +94,8 @@ class Server:
                 self.group_message(msg_json, signature, conn, addr, cipher)
             elif msg_command == 'CREATE_GROUP':
                 self.create_group(msg_json, signature, conn, addr, cipher)
+            elif msg_command == 'RENEW_KEY':
+                cipher = self.renew_keys(msg_json, signature, conn, addr, cipher)
             else:
                 print('Invalid msg - ignored')
         print(f"[CLOSE CONNECTION] {addr} closed.")
@@ -131,6 +134,18 @@ class Server:
         self.database.insert_user(username=username, h_password=h_password, public_key=public_key, salt=salt)
         return True, 'REGISTER SUCCESSFUL'
 
+    def update_user(self, username, password, public_key):
+        if not self.database.has_user(username):
+            return False, 'USERNAME DOES NOT EXIST'
+        salt = self.database.get_salt(username)
+        salty_password = f'{password}_{salt}'
+        h_password = hashlib.sha256(salty_password.encode(self.FORMAT)).hexdigest()
+        if not self.database.check_password(username, h_password):
+            return False, 'PASSWORD WRONG!'
+
+        self.database.update_user(username=username, public_key=public_key)
+        return True, 'UPDATE SUCCESSFUL'
+
     def logout(self, msg_json, signature, conn, addr, cipher):
         token = msg_json['token']
         username = self.users[token][0]
@@ -139,7 +154,7 @@ class Server:
             print(f"[UNEXPECTED CLOSE CONNECTION]")
             exit(-1)
         self.users.pop(token)
-    
+
     def send_online_users(self, msg_json, signature, conn, addr, cipher):
         token = msg_json['token']
         nonce = msg_json['nonce']
@@ -147,7 +162,7 @@ class Server:
         for user in self.users.items():
             users.add(user[1][0])
         users = list(users)
-        message = {'status': True, 'message': 'OK', 'nonce': nonce, 'users':users}
+        message = {'status': True, 'message': 'OK', 'nonce': nonce, 'users': users}
         signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
         response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
         self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
@@ -181,7 +196,7 @@ class Server:
             response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
             self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
             return
-        
+
         nonce2 = int.from_bytes(os.urandom(16), byteorder="big")
         message = {'status': True, 'message': 'OK', 'nonce': nonce2, 'salt': salt}
         signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
@@ -206,7 +221,7 @@ class Server:
         signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
         response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
         self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
-        
+
         with self.lock:
             self.users[token] = (username, conn, addr)
 
@@ -223,17 +238,17 @@ class Server:
             response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
             self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
             return
-        
+
         if not self.database.has_user(target_username):
             message = {'status': False, 'message': 'USERNAME NOT FOUND', 'nonce': nonce1, 'target_public_key': None}
             signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
             response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
             self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
             return
-        
+
         target_public_key = self.database.get_public_key(target_username)
-        
-        message = {'status': True, 'message': 'OK', 'nonce': nonce1, 'target_public_key':target_public_key}
+
+        message = {'status': True, 'message': 'OK', 'nonce': nonce1, 'target_public_key': target_public_key}
         signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
         response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
         self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
@@ -248,7 +263,7 @@ class Server:
             response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
             self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
             return
-        
+
         nonce2 = msg_json['nonce']
         encrypted_text_message = msg_json['encrypted_text_message']
         encrypted_cipher = msg_json['encrypted_cipher']
@@ -274,11 +289,11 @@ class Server:
         username = self.users[token][0]
         public_key = deserialize_public_key(self.database.get_public_key(username).encode(self.FORMAT))
         if not verify(json.dumps(msg_json).encode(self.FORMAT), signature.encode(self.FORMAT), public_key):
-           message = {'status': False, 'message': 'NOT VERIFIED', 'nonce': nonce1}
-           signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
-           response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
-           self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
-           return
+            message = {'status': False, 'message': 'NOT VERIFIED', 'nonce': nonce1}
+            signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+            response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
+            self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
+            return
 
         updated_messages = self.database.get_messages(username)
 
@@ -294,11 +309,11 @@ class Server:
         msg_json, signature = msg['message'], msg['signature']
 
         if not verify(json.dumps(msg_json).encode(self.FORMAT), signature.encode(self.FORMAT), public_key):
-           return
-        
+            return
+
         if not nonce2 == msg_json['nonce']:
             return
-        
+
         self.database.delete_messages(username)
 
     def add_member(self, msg_json, signature, conn, addr, cipher):
@@ -344,6 +359,12 @@ class Server:
             self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
             return
 
+        if not self.database.is_owner_of_group(username, group_id):
+            message = {'status': False, 'message': 'ONLY OWNER CAN ADD MEMBERS!', 'nonce': nonce}
+            signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+            response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
+            self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
+            return
         self.database.insert_memeber(group_id, target_username)
 
         message = {'status': True, 'message': 'SUCCESSFULLY INSERTED!', 'nonce': nonce}
@@ -509,3 +530,69 @@ class Server:
         for param in params:
             self.database.insert_message(param[0], param[1], param[2], param[3])
 
+    def renew_keys(self, msg_json, signature, conn, addr, cipher):
+        token = msg_json['token']
+        nonce = msg_json['nonce']
+        if token not in self.users:
+            message = {'status': False, 'message': 'NOT VERIFIED TOKEN', 'nonce': nonce}
+            signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+            response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
+            self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
+            return cipher
+        message = {'status': True, 'message': 'OK', 'nonce': nonce}
+        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+        response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
+        self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
+
+        try:
+            cipher_text = self.get_msg(conn, addr)
+            plain = asymmetric_decrypt(cipher_text, self.private_key)
+            plain = plain.decode(self.FORMAT)
+            plain = json.loads(plain)
+            msg = plain['message']
+            token, session_key, session_iv, nonce = msg['token'], msg['session_key'].encode(self.FORMAT), \
+                                                    msg['session_iv'].encode(self.FORMAT), msg['nonce']
+            if token not in self.users:
+                print("HERE 1")
+                print(f"[UNEXPECTED CLOSE CONNECTION] {addr}")
+                exit(-1)
+            user = self.users[token]
+            del self.users[token]
+            token = int.from_bytes(os.urandom(16), byteorder="big")
+            self.users[token] = user
+            new_cipher = get_cipher(session_key, session_iv)
+            message = {'status': True, 'message': 'SUCCESSFULLY CHANGED SESSION KEY',
+                       'nonce': nonce, 'token': token}
+
+            signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+            response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
+            self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), new_cipher), conn, addr)
+        except:
+            print("HERE 2")
+            print(f"[UNEXPECTED ERROR] {addr}")
+            return cipher
+
+        msg = self.get_msg(conn, addr)
+        msg = json.loads(symmetric_decrypt(msg, new_cipher).decode(self.FORMAT))
+        msg_json, signature = msg['message'], msg['signature']
+
+        token = msg_json['token']
+        password = msg_json['password']
+        nonce = msg_json['nonce']
+        public_key = deserialize_public_key(msg_json['public_key'].encode(self.FORMAT))
+        if not verify(json.dumps(msg_json).encode(self.FORMAT), signature.encode(self.FORMAT), public_key):
+            print("HERE 3")
+            print(f"[UNEXPECTED CLOSE CONNECTION]")
+            return cipher
+        if token not in self.users:
+            print("HERE 4")
+            print(f"[UNEXPECTED CLOSE CONNECTION] {addr}")
+            return cipher
+        username = self.users[token][0]
+        save_status, msg = self.update_user(username, password, msg_json['public_key'])
+        message = {'status': save_status, 'message': msg, 'nonce': nonce}
+        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+        response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
+        self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), new_cipher), conn, addr)
+
+        return new_cipher

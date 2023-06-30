@@ -122,6 +122,7 @@ class Client:
         table.append(["6"] + ["Remove Member"])
         table.append(["7"] + ["Update"])
         table.append(["8"] + ["Logout"])
+        table.append(["0"] + ["Renew Keys"])
         print()
         print(f'Hello {self.username}!')
         print(tabulate(table, headers=headers))
@@ -231,6 +232,8 @@ class Client:
             self.update()
         elif command == '8':
             self.logout()
+        elif command == '0':
+            self.renew_keys()
         else:
             print("Invalid command")
 
@@ -294,9 +297,11 @@ class Client:
             return
         print("Invalid command")
 
-    def send_encrypt_msg(self, message, with_signature=True):
+    def send_encrypt_msg(self, message, with_signature=True, p_k=None):
         if with_signature:
-            signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+            if p_k is None:
+                p_k = self.private_key
+            signature = sign(json.dumps(message).encode(self.FORMAT), p_k)
             msg = symmetric_encrypt(
                 json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT),
                 self.session_cipher)
@@ -326,8 +331,10 @@ class Client:
         status, msg, _ = self.check_response(response, f_response, nonce)
         return status, msg
 
-    def check_response(self, response, f_response, nonce=None):
-        response = json.loads(symmetric_decrypt(response, self.session_cipher).decode(self.FORMAT))
+    def check_response(self, response, f_response, nonce=None, cipher=None):
+        if cipher is None:
+            cipher = self.session_cipher
+        response = json.loads(symmetric_decrypt(response, cipher).decode(self.FORMAT))
         signature = response['signature']
         plain = response['message']
         if verify(json.dumps(plain).encode(self.FORMAT), signature.encode(self.FORMAT), self.server_public_key):
@@ -549,6 +556,7 @@ class Client:
         response = self.get_msg()
         status, msg, _ = self.check_response(response, f_response=f_response, nonce=nonce)
         print(msg)
+        self.group_chat(group_id, f"'{group_id}' is created")
 
     def add_member(self):
         def f_response(plain, nonce):
@@ -649,3 +657,67 @@ class Client:
         self.dataframe.store_message(self.username, main_formatted_message,
                                      self.password.encode(self.FORMAT))
         return valid, result
+
+    def renew_keys(self):
+        def f_response_1(plain, nonce):
+            if not plain['nonce'] == nonce:
+                return False, '[UNEXPECTED SERVER ERROR]', []
+            return plain['status'], plain['message'], [plain['token']]
+
+        def f_response_2(plain, nonce):
+            if not plain['nonce'] == nonce:
+                return False, '[UNEXPECTED SERVER ERROR]'
+            return plain['status'], plain['message'], []
+
+        print(self.session_cipher)
+        nonce = int.from_bytes(os.urandom(16), byteorder="big")
+        message = {'command': 'RENEW_KEY', 'token': self.token, 'nonce': nonce}
+        self.send_encrypt_msg(message)
+        response = self.get_msg()
+        status, msg, _ = self.check_response(response, f_response=f_response_2, nonce=nonce)
+        if not status:
+            print(msg)
+            print('UNKNOWN SERVER ERROR')
+            return
+
+        new_session_key, new_session_iv, new_session_cipher = set_key()
+        nonce = int.from_bytes(os.urandom(16), byteorder="big")
+        message = {'token': self.token, 'session_key': new_session_key.decode(self.FORMAT),
+                   'session_iv': new_session_iv.decode(self.FORMAT), 'nonce': nonce}
+
+        plain_json = {'message': message, 'signature': ''}
+        plain = json.dumps(plain_json).encode(self.FORMAT)
+
+        encrypted_message = asymmetric_encrypt(plain, self.server_public_key)
+        self.send_msg(encrypted_message)
+
+        response = self.get_msg()
+        status, msg, params = self.check_response(response, f_response=f_response_1,
+                                                  nonce=nonce, cipher=new_session_cipher)
+        if not status:
+            print(msg)
+            return
+
+        self.token = params[0]
+
+        self.session_key, self.session_iv, self.session_cipher = new_session_key, new_session_iv, new_session_cipher
+
+        new_private_key, new_public_key = set_keys()
+
+        nonce = int.from_bytes(os.urandom(16), byteorder="big")
+        message = {'token': self.token,
+                   'password': self.password,
+                   'nonce': nonce,
+                   'public_key': serialize_public_key(new_public_key).decode(self.FORMAT)}
+
+        self.send_encrypt_msg(message, p_k=new_private_key)
+        response = self.get_msg()
+
+        status, msg, _ = self.check_response(response, f_response_2, nonce)
+        print(msg)
+        if not status:
+            return
+        self.private_key, self.public_key = new_private_key, new_public_key
+        self.save_info(self.username, self.password)
+        self.private_key, self.public_key = new_private_key, new_public_key
+        print(self.session_cipher)

@@ -28,7 +28,6 @@ def asymmetric_encrypt(plain_text, key):
     )
 
 
-
 def symmetric_decrypt(cipher_text, cipher):
     decryptor = cipher.decryptor()
     return decryptor.update(cipher_text)
@@ -62,7 +61,7 @@ def verify(plain, signature, public_key):
             hashes.SHA256()
         )
         return True
-    
+
     except:
         return False
 
@@ -74,19 +73,23 @@ def set_key():
     cipher = Cipher(algorithm, mode=None)
     return key, iv, cipher
 
+
 def get_cipher(key, iv):
     algorithm = algorithms.ChaCha20(key, iv)
     return Cipher(algorithm, mode=None)
+
 
 def encrypt_user_messages(plain_text, password):
     h_password = hashlib.sha256(password).hexdigest()
     cipher = get_cipher(h_password[:32].encode('latin-1'), h_password[32:48].encode('latin-1'))
     return symmetric_encrypt(plain_text.encode('latin-1'), cipher)
 
+
 def decrypt_user_messages(cipher_text, password):
     h_password = hashlib.sha256(password).hexdigest()
     cipher = get_cipher(h_password[:32].encode('latin-1'), h_password[32:48].encode('latin-1'))
     return symmetric_decrypt(cipher_text, cipher).decode('latin-1')
+
 
 def set_keys():
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
@@ -148,6 +151,7 @@ def load_server_public_key():
             key_file.read()
         )
     return public_key
+
 
 def get_keys(key_path, password):
     with open(key_path, 'rb') as key_file:

@@ -9,11 +9,17 @@
 	- Database: insert users(public key, user, hash(pass+salt), salt)
 
 - Key Renewal:
+    - Client: E[K, (token, nonce)]
+    - Server: E[K, (nonce)]
+
+    - Client: E[public_key, (token, session_iv, session_key, nonce)]
+	- Server: E[K, (nonce)]
+
 	- Client: E[K, (token, pass, public key, nonce), with signature] 
 	- Server: E[K, (nonce, msg, status), with signature]
-	
+
 	- Database: update users(public key, user, hash(pass+salt), salt)
-	
+
 - Login:
 	- Client: E[K, (user, nonce1), with signature] 
 	- Server: E[K, (nonce2, salt), with signature] 
