@@ -21,19 +21,18 @@ class Database:
         CREATE TABLE IF NOT EXISTS Messages(
             sender,
             receiver,
-            group_id,
             encrypted_msg NOT NULL,
             encrypted_cipher NOT NULL,
             FOREIGN KEY(sender) REFERENCES Users(username),
             FOREIGN KEY(receiver) REFERENCES Users(username),
             FOREIGN KEY(group_id) REFERENCES Groups(group_id));
         CREATE TABLE IF NOT EXISTS Groups(
-            group_id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+            group_id NOT NULL PRIMARY KEY,
             owner,
             FOREIGN KEY(owner) REFERENCES Users(username));
         CREATE TABLE IF NOT EXISTS Group_Members(
-            group_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
+            group_id NOT NULL,
+            user_id NOT NULL,
             PRIMARY KEY (group_id, user_id),
             FOREIGN KEY(user_id) REFERENCES Users(username),
             FOREIGN KEY(group_id) REFERENCES Groups(group_id));
@@ -49,10 +48,10 @@ class Database:
         con.commit()
         con.close()
 
-    def insert_message(self, sender, receiver, encrypted_text_message, encrypted_cipher, group_id=None):
+    def insert_message(self, sender, receiver, encrypted_text_message, encrypted_cipher):
         con = sqlite3.connect(self.db_path)
         cur = con.cursor()
-        cur.execute("INSERT INTO Messages(sender, receiver, group_id, encrypted_msg, encrypted_cipher) VALUES(?,?,?,?,?);", (sender, receiver, group_id, encrypted_text_message, encrypted_cipher,))
+        cur.execute("INSERT INTO Messages(sender, receiver, encrypted_msg, encrypted_cipher) VALUES(?,?,?,?,?);", (sender, receiver, encrypted_text_message, encrypted_cipher,))
         con.commit()
         con.close()
     
@@ -120,3 +119,52 @@ class Database:
         con.commit()
         con.close()
         return True
+
+    def has_group(self, group_id):
+        con = sqlite3.connect(self.db_path)
+        cur = con.cursor()
+        cur.execute("SELECT group_id FROM Groups WHERE group_id=?", (group_id,))
+        rows = cur.fetchall()
+        con.close()
+        return len(rows) > 0
+
+    def is_member_of_group(self, user_id, group_id):
+        con = sqlite3.connect(self.db_path)
+        cur = con.cursor()
+        cur.execute("SELECT * FROM Group_Members WHERE group_id=? and user_id=?", (group_id, user_id, ))
+        rows = cur.fetchall()
+        con.close()
+        return len(rows) > 0
+
+    def is_owner_of_group(self, user_id, group_id):
+        con = sqlite3.connect(self.db_path)
+        cur = con.cursor()
+        cur.execute("SELECT group_id FROM Groups WHERE group_id=? and owner=?", (group_id, user_id, ))
+        rows = cur.fetchall()
+        con.close()
+        return len(rows) > 0
+
+    def insert_memeber(self, group_id, user_id):
+        con = sqlite3.connect(self.db_path)
+        cur = con.cursor()
+        cur.execute(
+            "INSERT INTO Group_Members(group_id, user_id) VALUES(?,?);",
+            (group_id, user_id,))
+        con.commit()
+        con.close()
+
+    def delete_member(self, group_id, user_id):
+        con = sqlite3.connect(self.db_path)
+        cur = con.cursor()
+        cur.execute(f'DELETE FROM Group_Members WHERE group_id=? and user_id=?', (group_id, user_id,))
+        con.commit()
+        con.close()
+
+    def insert_group(self, group_id, owner_id):
+        con = sqlite3.connect(self.db_path)
+        cur = con.cursor()
+        cur.execute(
+            "INSERT INTO Groups(group_id, owner) VALUES(?,?);",
+            (group_id, owner_id,))
+        con.commit()
+        con.close()

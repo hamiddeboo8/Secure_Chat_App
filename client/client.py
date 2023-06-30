@@ -1,10 +1,8 @@
 import json
-import os
 import shutil
 import socket
 from datetime import datetime
 from enum import Enum
-import hashlib
 from tabulate import tabulate
 
 from utils.utils import *
@@ -39,6 +37,8 @@ class Client:
         self.token = None
         self.direct_menu_users = {}
         self.pv_username = None
+        self.group_menu_groups = {}
+        self.group_id = None
 
         self.server_public_key = load_server_public_key()  # TODO
 
@@ -48,7 +48,6 @@ class Client:
         self.public_key = None
 
         self.dataframe = Dataframe()
-
 
     def handshake(self):
         nonce = int.from_bytes(os.urandom(16), byteorder="big")
@@ -68,7 +67,6 @@ class Client:
         else:
             print("[UNEXPECTED SERVER ERROR]")
             exit(-1)
-
 
     def menu(self, show_menu=True, command=None):
         if self.state == Menu.MAIN:
@@ -91,6 +89,16 @@ class Client:
                 self.print_pv_menu()
             else:
                 self.pv_menu(command)
+        elif self.state == Menu.GROUP:
+            if show_menu:
+                self.print_group_menu()
+            else:
+                self.group_menu(command)
+        elif self.state == Menu.GROUP_CHAT:
+            if show_menu:
+                self.print_group_chat_menu()
+            else:
+                self.group_chat_menu(command)
         if self.state != Menu.MAIN:
             self.update()
 
@@ -128,10 +136,23 @@ class Client:
             self.direct_menu_users[str(i+2)] = user
         print()
         print(tabulate(table, headers=headers))
-    
+
+    def print_group_menu(self):
+        table = []
+        groups = self.dataframe.get_groups(self.username, self.password.encode(self.FORMAT))
+        headers = ["ID", "Command"]
+        table.append(["0"] + ["Back"])
+        table.append(["1"] + ["Message"])
+        for i, group in enumerate(groups):
+            table.append([str(i+2)] + [group])
+            self.group_menu_groups[str(i+2)] = group
+        print()
+        print(tabulate(table, headers=headers))
+
     def print_pv_menu(self):
         print(f'#### Private Chat with {self.pv_username} ####\n')
-        msgs = self.dataframe.get_messages(self.username, self.password.encode(self.FORMAT), self.pv_username)
+        msgs = self.dataframe.get_messages(self.username, self.password.encode(self.FORMAT),
+                                           addressee_username=self.pv_username)
         print(tabulate(msgs, headers=["Time", "User", "Message"]))
         print('\n###################################')
         table = []
@@ -140,6 +161,16 @@ class Client:
         table.append(["1"] + ["Message"])
         print(tabulate(table, headers=headers))
 
+    def print_group_chat_menu(self):
+        print(f'#### Group Chat with {self.group_id} ####\n')
+        msgs = self.dataframe.get_messages(self.username, self.password.encode(self.FORMAT), group_id=self.group_id)
+        print(tabulate(msgs, headers=["Time", "User", "Message"]))
+        print('\n###################################')
+        table = []
+        headers = ["ID", "Command"]
+        table.append(["0"] + ["Back"])
+        table.append(["1"] + ["Message"])
+        print(tabulate(table, headers=headers))
 
     def send_msg(self, msg):
         self.client.send(msg)
@@ -158,7 +189,6 @@ class Client:
     def exit(self):
         message = {'command': self.DISCONNECT_MESSAGE}
         self.send_encrypt_msg(message, with_signature=False)
-
 
     def run(self):
         connected = True
@@ -187,9 +217,15 @@ class Client:
         if command == '1':
             self.state = Menu.DIRECT
         elif command == '2':
-            pass
+            self.create_group()
+        elif command == '3':
+            self.add_member()
+        elif command == '4':
+            self.state = Menu.GROUP
         elif command == '5':
             self.show_online_users()
+        elif command == '6':
+            self.remove_member()
         elif command == '7':
             self.update()
         elif command == '8':
@@ -203,15 +239,33 @@ class Client:
             self.state = Menu.ACCOUNT
             return
         elif command == '1':
-            reciever_username = input('Who do you want to message?\n')
+            receiver_username = input('Who do you want to message?\n')
             text_message = input('Enter your message:\n')
-            _, server_msg = self.direct(reciever_username, text_message)
+            _, server_msg = self.direct(receiver_username, text_message)
             print(server_msg)
             return
         for i, menu_username in self.direct_menu_users.items():
             if command == i:
                 self.state = Menu.PV
                 self.pv_username = menu_username
+                return
+        print("Invalid command")
+
+    def group_menu(self, command):
+        if command == '0':
+            self.group_menu_groups = {}
+            self.state = Menu.ACCOUNT
+            return
+        elif command == '1':
+            group_id = input('Which group do you want to message?\n')
+            text_message = input('Enter your message:\n')
+            _, server_msg = self.group_chat(group_id, text_message)
+            print(server_msg)
+            return
+        for i, menu_group_id in self.group_menu_groups.items():
+            if command == i:
+                self.state = Menu.GROUP_CHAT
+                self.group_id = menu_group_id
                 return
         print("Invalid command")
     
@@ -226,7 +280,19 @@ class Client:
             print(server_msg)
             return
         print("Invalid command")
-    
+
+    def group_chat_menu(self, command):
+        if command == '0':
+            self.group_id = None
+            self.state = Menu.GROUP
+            return
+        elif command == '1':
+            text_message = input('Enter your message:\n')
+            _, server_msg = self.group_chat(self.group_id, text_message)
+            print(server_msg)
+            return
+        print("Invalid command")
+
     def send_encrypt_msg(self, message, with_signature=True):
         if with_signature:
             signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
@@ -407,7 +473,7 @@ class Client:
 
         formatted_message = json.dumps({'text': text_message,
                                         'sender': self.username,
-                                        'reciever': target_username,
+                                        'receiver': target_username,
                                         'group_id': None,
                                         'time': datetime.now().strftime("%m/%d/%Y, %H:%M:%S")})
         
@@ -458,4 +524,108 @@ class Client:
             u = users[i+1] if i+1<len(users) else ''
             table.append([users[i]] + [u])
         print(tabulate(table, headers=headers))
-        
+
+    def create_group(self):
+        def f_response(plain, nonce):
+            if not plain['nonce'] == nonce:
+                return False, '[UNEXPECTED SERVER ERROR]', []
+            return plain['status'], plain['message'], []
+        group_id = input("Enter The Group ID:\n")
+        nonce = int.from_bytes(os.urandom(16), byteorder="big")
+        message = {'command': 'CREATE_GROUP', 'token': self.token, 'group_id': group_id, 'nonce': nonce}
+        self.send_encrypt_msg(message)
+        response = self.get_msg()
+        status, msg, _ = self.check_response(response, f_response=f_response, nonce=nonce)
+        print(msg)
+
+    def add_member(self):
+        def f_response(plain, nonce):
+            if not plain['nonce'] == nonce:
+                return False, '[UNEXPECTED SERVER ERROR]', []
+            return plain['status'], plain['message'], []
+
+        group_id = input("Enter The Group ID:\n")
+        target_username = input("Enter The Username:\n")
+        nonce = int.from_bytes(os.urandom(16), byteorder="big")
+        message = {'command': 'ADD_MEMBER', 'token': self.token, 'username': target_username,
+                   'group_id': group_id, 'nonce': nonce}
+        self.send_encrypt_msg(message)
+        response = self.get_msg()
+        status, msg, _ = self.check_response(response, f_response=f_response, nonce=nonce)
+        print(msg)
+
+    def remove_member(self):
+        def f_response(plain, nonce):
+            if not plain['nonce'] == nonce:
+                return False, '[UNEXPECTED SERVER ERROR]', []
+            return plain['status'], plain['message'], []
+
+        group_id = input("Enter The Group ID:\n")
+        target_username = input("Enter The Username:\n")
+        nonce = int.from_bytes(os.urandom(16), byteorder="big")
+        message = {'command': 'DELETE_MEMBER', 'token': self.token, 'username': target_username,
+                   'group_id': group_id, 'nonce': nonce}
+        self.send_encrypt_msg(message)
+        response = self.get_msg()
+        status, msg, _ = self.check_response(response, f_response=f_response, nonce=nonce)
+        print(msg)
+
+    def group_chat(self, group_id, text_message):
+        def f_response1(plain, nonce):
+            if not plain['nonce'] == nonce:
+                return False, '[UNEXPECTED SERVER ERROR]', []
+            return plain['status'], plain['message'], [plain['public_usernames']]
+
+        def f_response2(plain, nonce):
+            if not plain['nonce'] == nonce:
+                return False, '[UNEXPECTED SERVER ERROR]', []
+            return plain['status'], plain['message'], []
+
+        nonce1 = int.from_bytes(os.urandom(16), byteorder="big")
+        message = {'command': 'GROUP_MESSAGE',
+                   'token': self.token,
+                   'group_id': group_id,
+                   'nonce': nonce1}
+        self.send_encrypt_msg(message)
+
+        response = self.get_msg()
+        valid, result, params = self.check_response(response, f_response=f_response1, nonce=nonce1)
+        if not valid:
+            return False, result
+
+        public_usernames = params[0]
+        formatted_messages = []
+        for public_username in public_usernames:
+            public_key = public_username['public_key']
+            target_public_key = deserialize_public_key(public_key.encode(self.FORMAT))
+            target_username = public_username['username']
+
+            key, iv, cipher = set_key()
+            key = key.decode(self.FORMAT)
+            iv = iv.decode(self.FORMAT)
+
+            formatted_message = json.dumps({'text': text_message,
+                                            'sender': self.username,
+                                            'receiver': target_username,
+                                            'group_id': group_id,
+                                            'time': datetime.now().strftime("%m/%d/%Y, %H:%M:%S")})
+            formatted_messages.append(formatted_message)
+            encrypted_text_message = symmetric_encrypt(formatted_message.encode(self.FORMAT), cipher).decode(
+                self.FORMAT)
+            encrypted_cipher = asymmetric_encrypt(json.dumps({'key': key, 'iv': iv}).encode(self.FORMAT),
+                                                  target_public_key).decode(self.FORMAT)
+            nonce2 = int.from_bytes(os.urandom(16), byteorder="big")
+            message = {'nonce': nonce2,
+                       'encrypted_text_message': encrypted_text_message,
+                       'encrypted_cipher': encrypted_cipher}
+            self.send_encrypt_msg(message)
+
+            response = self.get_msg()
+            valid, result, params = self.check_response(response, f_response=f_response2, nonce=nonce2)
+            if not valid:
+                return False, result
+
+        for formatted_message in formatted_messages:
+            self.dataframe.store_message(self.username, json.loads(formatted_message),
+                                         self.password.encode(self.FORMAT))
+        return valid, result
