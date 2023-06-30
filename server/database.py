@@ -168,3 +168,12 @@ class Database:
             (group_id, owner_id,))
         con.commit()
         con.close()
+
+    def get_members(self, group_id):
+        con = sqlite3.connect(self.db_path)
+        cur = con.cursor()
+        cur.execute("SELECT user_id FROM Group_Members WHERE group_id=?", (group_id,))
+        rows = cur.fetchall()
+        con.close()
+        members = [row[0] for row in rows]
+        return members
