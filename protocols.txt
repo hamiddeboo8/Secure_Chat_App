@@ -2,6 +2,9 @@
 	- Client: E[public_key, (session_iv, session_key, nonce)] 
 	- Server: E[K, (nonce)]
 
+	- Client: E[K, (client_dh_public_key, nonce)]
+	- Server: E[K, (server_dh_public_key, nonce) with signature]
+
 - Register:
 	- Client: E[K, (user, pass, public key, nonce), with signature] 
 	- Server: E[K, (nonce, msg, status), with signature]
