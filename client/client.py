@@ -67,30 +67,34 @@ class Client:
             print("[UNEXPECTED SERVER ERROR]")
             exit(-1)
 
-        self.dh_exchange()
-        
+        self.private_key, self.public_key = set_keys()
+        self.session_key, self.session_cipher = self.dh_exchange(self.private_key)
 
-    def dh_exchange(self):   
+    def dh_exchange(self, private_key, cipher=None, session_iv=None):
         def f_response(plain, nonce):
             if not plain['nonce'] == nonce:
                 return False, '[UNEXPECTED SERVER ERROR]'
             return plain['status'], plain['message'], plain['dh_public_key']
+        if session_iv is None:
+            session_iv = self.session_iv
+        if cipher is None:
+            cipher = self.session_cipher
 
-        self.private_key, self.public_key = set_keys()
         nonce = int.from_bytes(os.urandom(16), byteorder="big")
         dh_private_key = get_dh_key()
         message = {'dh_public_key': serialize_public_key(dh_private_key.public_key()).decode(self.FORMAT),
                    'nonce': nonce}
 
-        self.send_encrypt_msg(message)
+        self.send_encrypt_msg(message, p_k=private_key, cipher=cipher)
         response = self.get_msg()
 
-        status, msg, peer_public_key = self.check_response(response, f_response, nonce)
+        status, msg, peer_public_key = self.check_response(response, f_response, nonce, cipher=cipher)
         if not status:
             print("[UNEXPECTED SERVER ERROR]")
             exit(-1)
-        self.session_key = get_dh_shared_key(dh_private_key, deserialize_public_key(peer_public_key.encode(self.FORMAT)))
-        self.session_cipher = get_cipher(self.session_key, self.session_iv)
+        session_key = get_dh_shared_key(dh_private_key,
+                                        deserialize_public_key(peer_public_key.encode(self.FORMAT)))
+        return session_key, get_cipher(session_key, session_iv)
 
     def menu(self, show_menu=True, command=None):
         if self.state == Menu.MAIN:
@@ -320,18 +324,20 @@ class Client:
             return
         print("Invalid command")
 
-    def send_encrypt_msg(self, message, with_signature=True, p_k=None):
+    def send_encrypt_msg(self, message, with_signature=True, p_k=None, cipher=None):
+        if cipher is None:
+            cipher = self.session_cipher
         if with_signature:
             if p_k is None:
                 p_k = self.private_key
             signature = sign(json.dumps(message).encode(self.FORMAT), p_k)
             msg = symmetric_encrypt(
                 json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)}).encode(self.FORMAT),
-                self.session_cipher)
+                cipher)
             self.send_msg(msg)
         else:
             msg = symmetric_encrypt(json.dumps({'message': message, 'signature': ''}).encode(self.FORMAT),
-                                    self.session_cipher)
+                                    cipher)
             self.send_msg(msg)
 
     def register(self, username, password):
@@ -692,7 +698,6 @@ class Client:
                 return False, '[UNEXPECTED SERVER ERROR]'
             return plain['status'], plain['message'], []
 
-        print(self.session_cipher)
         nonce = int.from_bytes(os.urandom(16), byteorder="big")
         message = {'command': 'RENEW_KEY', 'token': self.token, 'nonce': nonce}
         self.send_encrypt_msg(message)
@@ -716,31 +721,31 @@ class Client:
 
         response = self.get_msg()
         status, msg, params = self.check_response(response, f_response=f_response_1,
-                                                  nonce=nonce, cipher=new_session_cipher)
+                                                nonce=nonce, cipher=new_session_cipher)
         if not status:
             print(msg)
             return
 
         self.token = params[0]
 
-        self.session_key, self.session_iv, self.session_cipher = new_session_key, new_session_iv, new_session_cipher
-
         new_private_key, new_public_key = set_keys()
-
+        new_session_key, new_session_cipher = self.dh_exchange(new_private_key, cipher=new_session_cipher,
+                                                               session_iv=new_session_iv)
         nonce = int.from_bytes(os.urandom(16), byteorder="big")
         message = {'token': self.token,
                    'password': self.password,
                    'nonce': nonce,
                    'public_key': serialize_public_key(new_public_key).decode(self.FORMAT)}
 
-        self.send_encrypt_msg(message, p_k=new_private_key)
+        self.send_encrypt_msg(message, p_k=new_private_key, cipher=new_session_cipher)
         response = self.get_msg()
 
-        status, msg, _ = self.check_response(response, f_response_2, nonce)
+        status, msg, _ = self.check_response(response, f_response_2, nonce, cipher=new_session_cipher)
         print(msg)
         if not status:
             return
+
+        self.session_key, self.session_iv, self.session_cipher = new_session_key, new_session_iv, new_session_cipher
         self.private_key, self.public_key = new_private_key, new_public_key
         self.save_info(self.username, self.password)
         self.private_key, self.public_key = new_private_key, new_public_key
-        print(self.session_cipher)

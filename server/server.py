@@ -55,19 +55,14 @@ class Server:
             cipher = get_cipher(session_key, session_iv)
             response = json.dumps({'status': True, 'message': '', 'nonce': nonce})
             self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), cipher), conn, addr)
-
-
             cipher_text = self.get_msg(conn, addr)
             plain = symmetric_decrypt(cipher_text, cipher)
             plain = plain.decode(self.FORMAT)
             plain = json.loads(plain)
             msg = plain['message']
             peer_public_key, nonce = msg['dh_public_key'], msg['nonce']
-
             dh_private_key = get_dh_key()
             session_key = get_dh_shared_key(dh_private_key, deserialize_public_key(peer_public_key.encode(self.FORMAT)))
-
-
             message = {'status': True, 'message': '', 'dh_public_key': serialize_public_key(dh_private_key.public_key()).decode(self.FORMAT), 'nonce': nonce}
             signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
             response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
@@ -77,9 +72,6 @@ class Server:
         except:
             print(f"[UNEXPECTED CLOSE CONNECTION] {addr}")
             exit(-1)
-
-        
-
         return cipher
 
     def handle_client(self, conn, addr):
@@ -593,7 +585,25 @@ class Server:
             print(f"[UNEXPECTED ERROR] {addr}")
             return cipher
 
+        cipher_text = self.get_msg(conn, addr)
+        plain = symmetric_decrypt(cipher_text, new_cipher)
+        plain = plain.decode(self.FORMAT)
+        plain = json.loads(plain)
+        msg = plain['message']
+        peer_public_key, nonce = msg['dh_public_key'], msg['nonce']
+        dh_private_key = get_dh_key()
+        session_key = get_dh_shared_key(dh_private_key, deserialize_public_key(peer_public_key.encode(self.FORMAT)))
+        message = {'status': True, 'message': '',
+                   'dh_public_key': serialize_public_key(dh_private_key.public_key()).decode(self.FORMAT),
+                   'nonce': nonce}
+        signature = sign(json.dumps(message).encode(self.FORMAT), self.private_key)
+        response = json.dumps({'message': message, 'signature': signature.decode(self.FORMAT)})
+        self.send_msg(symmetric_encrypt(response.encode(self.FORMAT), new_cipher), conn, addr)
+        print(new_cipher)
+        new_cipher = get_cipher(session_key, session_iv)
+        print(new_cipher)
         msg = self.get_msg(conn, addr)
+        #print(symmetric_decrypt(msg, new_cipher).decode(self.FORMAT))
         msg = json.loads(symmetric_decrypt(msg, new_cipher).decode(self.FORMAT))
         msg_json, signature = msg['message'], msg['signature']
 
